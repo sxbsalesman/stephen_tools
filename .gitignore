@@ -1,0 +1,11 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+audio/
+transcripts/
+summaries/
+*.log
+# Ignore ffmpeg binaries folder
+ffmpeg/
