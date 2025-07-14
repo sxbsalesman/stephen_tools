@@ -1,4 +1,5 @@
 import os
+import requests
 
 # Always use the ffmpeg in the project directory
 ffmpeg_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'ffmpeg', 'bin', 'ffmpeg.exe'))
@@ -26,7 +27,7 @@ def select_backend_and_model():
     print("2. LM Studio (local)")
     print("3. Ollama (local)")
 
-    choice = input("Enter 1, 2, or 3 (or press Enter for OpenAI Cloud): ").strip()
+    choice = input("Enter 1, 2, or 3 (or press Enter for OpenAI Cloud): ")).strip()
 
     if choice == "2":
         base_url = "http://localhost:1234/v1"
@@ -41,7 +42,7 @@ def select_backend_and_model():
     else:
         base_url = None
         print("\nYou selected OpenAI Cloud.")
-        api_key = input("Enter your OpenAI API key (or press Enter to use the .env/environment variable): ").strip()
+        api_key = input("Enter your OpenAI API key (or press Enter to use the .env/environment variable): ")).strip()
         if not api_key:
             api_key = os.environ.get("OPENAI_API_KEY")
         backend = "OpenAI Cloud"
@@ -150,10 +151,20 @@ def chat_session(model_name):
             print(Fore.RED + "No transcript files found." + Style.RESET_ALL)
 
     messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    if file_content:
-        messages.append({"role": "system", "content": f"Here is the file content for context:\n\n{file_content}"})
+    # Instead of using "system", prepend as a user message for local LLMs
+    if backend in ["LM Studio", "Ollama"]:
+        context_message = ""
+        if system_prompt:
+            context_message += system_prompt + "\n"
+        if file_content:
+            context_message += f"Here is the file content for context:\n\n{file_content}\n"
+        if context_message:
+            messages.append({"role": "user", "content": context_message})
+    else:
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        if file_content:
+            messages.append({"role": "system", "content": f"Here is the file content for context:\n\n{file_content}"})
 
     while True:
         user_input = input(Fore.YELLOW + "You: " + Style.RESET_ALL)
@@ -274,6 +285,22 @@ def split_text(text, max_words=3000):
         chunks.append(chunk)
     return chunks
 
+def check_server_running(base_url, backend):
+    """
+    Checks if the LM Studio or Ollama server is running by sending a GET request to /models endpoint.
+    Returns True if running, False otherwise.
+    """
+    try:
+        response = requests.get(f"{base_url}/models", timeout=5)
+        if response.status_code == 200:
+            return True
+        else:
+            print(Fore.RED + f"{backend} server responded with status code {response.status_code}." + Style.RESET_ALL)
+            return False
+    except Exception as e:
+        print(Fore.RED + f"Could not connect to {backend} server at {base_url}: {e}" + Style.RESET_ALL)
+        return False
+
 def main():
     """
     Main entry point for the application.
@@ -336,6 +363,13 @@ def main():
         }]
     )
     print(response.choices[0].message.content)
+
+    if backend in ["LM Studio", "Ollama"]:
+        if not check_server_running(base_url, backend):
+            print(Fore.RED + f"\n{backend} server is not running. Please start it and try again." + Style.RESET_ALL)
+            return  # or sys.exit(1)
+        else:
+            print(Fore.GREEN + f"{backend} server is running and ready!" + Style.RESET_ALL)
 
     while True:
         print(Fore.CYAN + "\nChoose an option:" + Style.RESET_ALL)
@@ -439,4 +473,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

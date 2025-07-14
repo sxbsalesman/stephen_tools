@@ -4,4 +4,4 @@ whisper
 torch
 colorama
 python-dotenv
-
+request
