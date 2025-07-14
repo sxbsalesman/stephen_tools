@@ -17,6 +17,10 @@ from colorama import Fore, Style, init
 init(autoreset=True)
 
 def select_backend_and_model():
+    """
+    Prompts the user to select which LLM backend to use (OpenAI, LM Studio, or Ollama).
+    Returns the base_url, api_key, backend name, and default model name for the chosen backend.
+    """
     print("\nChoose which LLM backend to use:")
     print("1. OpenAI Cloud (default)")
     print("2. LM Studio (local)")
@@ -36,7 +40,10 @@ def select_backend_and_model():
         model_name = "mistral:instruct"
     else:
         base_url = None
-        api_key = os.environ.get("OPENAI_API_KEY")
+        print("\nYou selected OpenAI Cloud.")
+        api_key = input("Enter your OpenAI API key (or press Enter to use the .env/environment variable): ").strip()
+        if not api_key:
+            api_key = os.environ.get("OPENAI_API_KEY")
         backend = "OpenAI Cloud"
         model_name = "gpt-4o"
 
@@ -45,6 +52,11 @@ def select_backend_and_model():
     return base_url, api_key, backend, model_name
 
 def download_audio(youtube_url, output_path="audio"):
+    """
+    Downloads audio from a YouTube video using yt_dlp and saves it as an mp3 file
+    in the specified output directory. Uses the local ffmpeg binary.
+    Returns the path to the downloaded audio file.
+    """
     if not os.path.exists(output_path):
         os.makedirs(output_path)
     ffmpeg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'ffmpeg', 'bin'))
@@ -66,6 +78,10 @@ def download_audio(youtube_url, output_path="audio"):
         return audio_file
 
 def transcribe_audio(audio_file, transcript_dir="transcripts"):
+    """
+    Transcribes the given audio file using Whisper and saves the transcript as a text file
+    in the transcripts directory. Returns the path to the transcript file.
+    """
     transcript_path = os.path.join(os.path.dirname(__file__), transcript_dir)
     if not os.path.exists(transcript_path):
         os.makedirs(transcript_path)
@@ -79,12 +95,20 @@ def transcribe_audio(audio_file, transcript_dir="transcripts"):
     return transcript_file
 
 def list_audio_files(audio_dir="audio"):
+    """
+    Lists all audio files (.mp3, .wav, .m4a) in the specified audio directory.
+    Returns a list of filenames.
+    """
     if not os.path.exists(audio_dir):
         print(Fore.RED + "No audio directory found." + Style.RESET_ALL)
         return []
     return [f for f in os.listdir(audio_dir) if f.lower().endswith(('.mp3', '.wav', '.m4a'))]
 
 def list_transcript_files(transcript_dir="transcripts"):
+    """
+    Lists all transcript text files (.txt) in the transcripts directory.
+    Returns a list of filenames.
+    """
     transcript_path = os.path.join(os.path.dirname(__file__), transcript_dir)
     if not os.path.exists(transcript_path):
         print(Fore.RED + "No transcripts directory found." + Style.RESET_ALL)
@@ -92,10 +116,15 @@ def list_transcript_files(transcript_dir="transcripts"):
     return [f for f in os.listdir(transcript_path) if f.lower().endswith('.txt')]
 
 def chat_session(model_name):
+    """
+    Starts an interactive chat session with the selected LLM model.
+    Allows the user to optionally provide a system prompt and/or transcript file as context.
+    """
     print(Fore.MAGENTA + "Starting chat session. Type 'exit' to quit." + Style.RESET_ALL)
 
     system_prompt = input(Fore.YELLOW + "Enter a system prompt (or press Enter to skip): " + Style.RESET_ALL).strip()
 
+    # Prompt to include a transcript file as context
     add_file_context = input(Fore.YELLOW + "Do you want to include a text file for context? (y/n): " + Style.RESET_ALL).strip().lower()
     file_content = ""
     if add_file_context == "y":
@@ -140,6 +169,10 @@ def chat_session(model_name):
         messages.append({"role": "assistant", "content": bot_message})
 
 def summarize_text(text, model_name):
+    """
+    Prompts the user for a summary format, sends the text and instruction to the LLM,
+    and returns the summary. Allows user to quit and return to main menu.
+    """
     print("\nChoose a summary format (or enter 'q' to return to main menu):")
     print("1. Bullet points")
     print("2. Numbered list")
@@ -178,7 +211,74 @@ def summarize_text(text, model_name):
     final_summary = "\n\n".join(summaries)
     return final_summary
 
+def delete_file_menu():
+    """
+    Allows the user to delete files from either the audio or transcripts folder.
+    User can select the folder, see a list of files, and confirm deletion.
+    """
+    while True:
+        print(Fore.CYAN + "\nDelete a file from which folder?" + Style.RESET_ALL)
+        print("1. audio")
+        print("2. transcripts")
+        print("q. Return to main menu")
+        folder_choice = input(Fore.YELLOW + "Enter your choice (1/2/q): " + Style.RESET_ALL).strip().lower()
+        if folder_choice == "q" or folder_choice == "":
+            print("Returning to main menu.")
+            return
+        if folder_choice == "1":
+            folder = "audio"
+            files = list_audio_files()
+        elif folder_choice == "2":
+            folder = "transcripts"
+            files = list_transcript_files()
+        else:
+            print(Fore.RED + "Invalid choice." + Style.RESET_ALL)
+            continue
+
+        if not files:
+            print(Fore.RED + f"No files found in {folder} folder." + Style.RESET_ALL)
+            continue
+
+        print(f"\nAvailable files in {folder}:")
+        for idx, fname in enumerate(files, 1):
+            print(f"{idx}. {fname}")
+        print("q. Return to previous menu")
+        file_choice = input(Fore.YELLOW + "Select a file number to delete (or 'q' to return): " + Style.RESET_ALL).strip().lower()
+        if file_choice == "q" or file_choice == "":
+            print("Returning to previous menu.")
+            continue
+        try:
+            file_idx = int(file_choice) - 1
+            if 0 <= file_idx < len(files):
+                file_path = os.path.join(os.path.dirname(__file__), folder, files[file_idx])
+                confirm = input(Fore.RED + f"Are you sure you want to delete '{files[file_idx]}'? (y/n): " + Style.RESET_ALL).strip().lower()
+                if confirm == "y":
+                    os.remove(file_path)
+                    print(Fore.GREEN + f"Deleted: {file_path}" + Style.RESET_ALL)
+                else:
+                    print("Delete cancelled.")
+            else:
+                print(Fore.RED + "Invalid selection." + Style.RESET_ALL)
+        except Exception as e:
+            print(Fore.RED + f"An error occurred: {e}" + Style.RESET_ALL)
+
+def split_text(text, max_words=3000):
+    """
+    Splits the input text into chunks, each with up to max_words words.
+    Returns a list of text chunks.
+    """
+    words = text.split()
+    chunks = []
+    for i in range(0, len(words), max_words):
+        chunk = " ".join(words[i:i + max_words])
+        chunks.append(chunk)
+    return chunks
+
 def main():
+    """
+    Main entry point for the application.
+    Handles backend/model selection, displays the main menu, and routes user choices.
+    """
     print("\n" + "="*60)
     print("         YouTube Downloader and Transcription Tools")
     print("="*60 + "\n")
@@ -191,7 +291,7 @@ def main():
             client = openai.OpenAI(
                 base_url=base_url,
                 api_key=api_key,
-                timeout=5
+                timeout=60
             )
             client.models.list()
         else:
@@ -202,11 +302,26 @@ def main():
         backend = "OpenAI Cloud"
         default_model = "gpt-4o"
 
+    # List available models if not using the default (OpenAI Cloud)
+    if backend != "OpenAI Cloud":
+        try:
+            print(Fore.CYAN + "\nAvailable models on this backend:" + Style.RESET_ALL)
+            models = client.models.list()
+            for m in models.data:
+                print(" -", m.id)
+            print()
+        except Exception as e:
+            print(Fore.RED + f"Could not list models: {e}" + Style.RESET_ALL)
+
     print("\n")
     user_input = input(Fore.YELLOW + f"Enter the model name to use (or press Enter to use default: {default_model}): " + Style.RESET_ALL).strip()
     print("\n")
     model_name = user_input if user_input else default_model
     print(Fore.GREEN + f"Using model: {model_name}" + Style.RESET_ALL)
+
+    if "instruct" not in model_name.lower() and "chat" not in model_name.lower():
+        print(Fore.YELLOW + "Warning: You are not using an 'instruct' or 'chat' model. "
+              "Responses may not follow instructions as expected." + Style.RESET_ALL)
 
     # Initial greeting and instructions from the assistant
     response = client.chat.completions.create(
@@ -228,8 +343,9 @@ def main():
         print("2. Select an audio file to transcribe")
         print("3. Start a chat session")
         print("4. Summarize a transcript file")
-        print("5. Exit")
-        choice = input(Fore.YELLOW + "Enter your choice (1/2/3/4/5): " + Style.RESET_ALL).strip()
+        print("5. Delete a file")
+        print("6. Exit")
+        choice = input(Fore.YELLOW + "Enter your choice (1/2/3/4/5/6): " + Style.RESET_ALL).strip()
 
         if choice == "1":
             youtube_url = input(Fore.YELLOW + "Enter the YouTube Video URL: " + Style.RESET_ALL).strip()
@@ -314,9 +430,10 @@ def main():
                 print(f"An error occurred: {e}")
 
         elif choice == "5":
+            delete_file_menu()
+        elif choice == "6":
             print(Fore.CYAN + "Goodbye!" + Style.RESET_ALL)
             break
-
         else:
             print(Fore.RED + "Invalid choice. Please enter a valid option." + Style.RESET_ALL)
 
