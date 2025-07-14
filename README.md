@@ -1,4 +1,4 @@
-# YouTube Transcript and Summarizer Project ver 1.2.1
+# YouTube Transcript and Summarizer Project ver 1.3.0
 
 This project allows you to download YouTube audio, transcribe it using Whisper, and have interactive chat sessions with AI models (OpenAI, LM Studio, or Ollama).  
 
