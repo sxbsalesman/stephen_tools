@@ -1,5 +1,5 @@
 import os
-import requests
+import requests # type: ignore
 
 # Always use the ffmpeg in the project directory
 ffmpeg_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'ffmpeg', 'bin', 'ffmpeg.exe'))
@@ -8,12 +8,12 @@ os.environ["PATH"] = os.path.dirname(ffmpeg_path) + os.pathsep + os.environ["PAT
 
 # print("Using ffmpeg at:", ffmpeg_path)
 
-import yt_dlp
-import whisper
-import torch
-import openai
+import yt_dlp # type: ignore
+import whisper # type: ignore
+import torch # type: ignore
+import openai # type: ignore
 import subprocess
-from colorama import Fore, Style, init
+from colorama import Fore, Style, init # type: ignore
 
 init(autoreset=True)
 
@@ -27,7 +27,7 @@ def select_backend_and_model():
     print("2. LM Studio (local)")
     print("3. Ollama (local)")
 
-    choice = input("Enter 1, 2, or 3 (or press Enter for OpenAI Cloud): ")).strip()
+    choice = input("Enter 1, 2, or 3 (or press Enter for OpenAI Cloud): ").strip()
 
     if choice == "2":
         base_url = "http://localhost:1234/v1"
@@ -42,7 +42,7 @@ def select_backend_and_model():
     else:
         base_url = None
         print("\nYou selected OpenAI Cloud.")
-        api_key = input("Enter your OpenAI API key (or press Enter to use the .env/environment variable): ")).strip()
+        api_key = input("Enter your OpenAI API key (or press Enter to use the .env/environment variable): ").strip()
         if not api_key:
             api_key = os.environ.get("OPENAI_API_KEY")
         backend = "OpenAI Cloud"
@@ -152,7 +152,7 @@ def chat_session(model_name):
 
     messages = []
     # Instead of using "system", prepend as a user message for local LLMs
-    if backend in ["LM Studio", "Ollama"]:
+    if backend in ["LM Studio", "Ollama"]: # type: ignore
         context_message = ""
         if system_prompt:
             context_message += system_prompt + "\n"
