@@ -50,6 +50,12 @@ def select_backend_and_model():
 
     print(f"Selected backend: {backend}")
     print(f"Default model set: {model_name}")
+
+   ## device = "cuda" if torch.cuda.is_available() else "cpu"
+   ## model_name = whisper.load_model("base", device=device)
+   ## print('Are you are able to the Nvidia Cuda support?', torch.cuda.is_available())
+   ## print(torch.cuda.get_device_name(0))
+
     return base_url, api_key, backend, model_name
 
 def download_audio(youtube_url, output_path="audio"):
@@ -346,9 +352,10 @@ def main():
     model_name = user_input if user_input else default_model
     print(Fore.GREEN + f"Using model: {model_name}" + Style.RESET_ALL)
 
-    if "instruct" not in model_name.lower() and "chat" not in model_name.lower():
-        print(Fore.YELLOW + "Warning: You are not using an 'instruct' or 'chat' model. "
-              "Responses may not follow instructions as expected." + Style.RESET_ALL)
+    if isinstance(model_name, str):
+        if "instruct" not in model_name.lower() and "chat" not in model_name.lower():
+            print(Fore.YELLOW + "Warning: You are not using an 'instruct' or 'chat' model. "
+                  "Responses may not follow instructions as expected." + Style.RESET_ALL)
 
     # Initial greeting and instructions from the assistant
     response = client.chat.completions.create(
