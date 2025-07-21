@@ -84,6 +84,32 @@ def download_audio(youtube_url, output_path="audio"):
         audio_file = os.path.splitext(filename)[0] + '.mp3'
         return audio_file
 
+def download_soundcloud_audio(soundcloud_url, output_path="soundcloud"):
+    """
+    Downloads audio from a SoundCloud URL using yt_dlp and saves it as an mp3 file
+    in the specified output directory.
+    Returns the path to the downloaded audio file.
+    """
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
+    ffmpeg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'ffmpeg', 'bin'))
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': os.path.join(output_path, '%(title)s.%(ext)s'),
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'quiet': False,
+        'ffmpeg_location': ffmpeg_dir,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(soundcloud_url, download=True)
+        filename = ydl.prepare_filename(info)
+        audio_file = os.path.splitext(filename)[0] + '.mp3'
+        return audio_file
+
 def transcribe_audio(audio_file, transcript_dir="transcripts"):
     """
     Transcribes the given audio file using Whisper and saves the transcript as a text file
@@ -279,6 +305,56 @@ def delete_file_menu():
         except Exception as e:
             print(Fore.RED + f"An error occurred: {e}" + Style.RESET_ALL)
 
+def combine_transcript_files():
+    """
+    Allows the user to select multiple transcript files and combine them into a single file.
+    The combined file is saved in the combined_transcription folder with a user-specified name.
+    """
+    transcript_files = list_transcript_files()
+    if not transcript_files:
+        print(Fore.RED + "No transcript files found in the transcripts directory." + Style.RESET_ALL)
+        return
+
+    print("\nAvailable transcript files:")
+    for idx, fname in enumerate(transcript_files, 1):
+        print(f"{idx}. {fname}")
+    print("Enter the numbers of the files to combine, separated by commas (e.g., 1,2,4), or 'q' to return to main menu.")
+    file_choices = input(Fore.YELLOW + "Your selection: " + Style.RESET_ALL).strip()
+    if file_choices.lower() == "q" or file_choices == "":
+        print("Returning to main menu.")
+        return
+
+    try:
+        indices = [int(num.strip()) - 1 for num in file_choices.split(",") if num.strip().isdigit()]
+        selected_files = [transcript_files[i] for i in indices if 0 <= i < len(transcript_files)]
+        if not selected_files:
+            print(Fore.RED + "No valid files selected." + Style.RESET_ALL)
+            return
+    except Exception as e:
+        print(Fore.RED + f"Invalid input: {e}" + Style.RESET_ALL)
+        return
+
+    combined_text = ""
+    for fname in selected_files:
+        file_path = os.path.join(os.path.dirname(__file__), "transcripts", fname)
+        with open(file_path, "r", encoding="utf-8") as f:
+            combined_text += f"\n--- {fname} ---\n"
+            combined_text += f.read() + "\n"
+
+    combined_dir = os.path.join(os.path.dirname(__file__), "combined_transcription")
+    if not os.path.exists(combined_dir):
+        os.makedirs(combined_dir)
+
+    output_name = input(Fore.YELLOW + "Enter a name for the combined file (without extension): " + Style.RESET_ALL).strip()
+    if not output_name:
+        print("No name entered. Returning to main menu.")
+        return
+
+    output_path = os.path.join(combined_dir, f"{output_name}.txt")
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(combined_text)
+    print(Fore.GREEN + f"Combined file saved to: {output_path}" + Style.RESET_ALL)
+
 def split_text(text, max_words=3000):
     """
     Splits the input text into chunks, each with up to max_words words.
@@ -382,11 +458,13 @@ def main():
         print(Fore.CYAN + "\nChoose an option:" + Style.RESET_ALL)
         print("1. Download a YouTube file for processing")
         print("2. Select an audio file to transcribe")
-        print("3. Start a chat session")
-        print("4. Summarize a transcript file")
-        print("5. Delete a file")
-        print("6. Exit")
-        choice = input(Fore.YELLOW + "Enter your choice (1/2/3/4/5/6): " + Style.RESET_ALL).strip()
+        print("3. Combine transcript files")
+        print("4. Start a chat session")
+        print("5. Summarize a transcript file")
+        print("6. Download a SoundCloud audio file")
+        print("7. Delete a file")
+        print("8. Exit")
+        choice = input(Fore.YELLOW + "Enter your choice (1/2/3/4/5/6/7/8): " + Style.RESET_ALL).strip()
 
         if choice == "1":
             youtube_url = input(Fore.YELLOW + "Enter the YouTube Video URL: " + Style.RESET_ALL).strip()
@@ -429,9 +507,10 @@ def main():
                 print(f"An error occurred: {e}")
 
         elif choice == "3":
-            chat_session(model_name)
-
+            combine_transcript_files()
         elif choice == "4":
+            chat_session(model_name)
+        elif choice == "5":
             transcript_files = list_transcript_files()
             if not transcript_files:
                 print("No transcript files found in the transcripts directory.")
@@ -470,9 +549,17 @@ def main():
             except Exception as e:
                 print(f"An error occurred: {e}")
 
-        elif choice == "5":
-            delete_file_menu()
         elif choice == "6":
+            soundcloud_url = input(Fore.YELLOW + "Enter the SoundCloud URL: " + Style.RESET_ALL).strip()
+            try:
+                print("Downloading SoundCloud audio...")
+                audio_file = download_soundcloud_audio(soundcloud_url)
+                print(Fore.GREEN + f"Audio downloaded to: {audio_file}" + Style.RESET_ALL)
+            except Exception as e:
+                print(Fore.RED + f"An error occurred: {e}" + Style.RESET_ALL)
+        elif choice == "7":
+            delete_file_menu()
+        elif choice == "8":
             print(Fore.CYAN + "Goodbye!" + Style.RESET_ALL)
             break
         else:

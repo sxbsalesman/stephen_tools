@@ -95,6 +95,38 @@ ollama pull llama3
 
 ---
 
+## ⚡️ GPU Support (NVIDIA CUDA)
+
+- If you have an NVIDIA GPU and want to use CUDA acceleration for Whisper and PyTorch:
+    1. Install the correct CUDA-enabled version of PyTorch. Visit [PyTorch Get Started](https://pytorch.org/get-started/locally/) and use the command for your CUDA version (e.g., CUDA 12.1).
+    2. Example for CUDA 12.1:
+        ```
+        pip install torch --index-url https://download.pytorch.org/whl/cu121
+        ```
+    3. If you only install `torch` with `pip install torch`, you may get the CPU-only version and CUDA will not work.
+    4. After installing, test with:
+        ```python
+        import torch
+        print(torch.cuda.is_available())
+        print(torch.cuda.get_device_name(0))
+        ```
+    5. If you see `True` and your GPU name, CUDA is working!
+
+- If you do **not** have an NVIDIA GPU, the app will automatically use CPU.
+
+---
+
+## 📝 Whisper Compatibility
+
+- For best compatibility on Windows, use the `openai-whisper` package (not the original `whisper`).
+- In your requirements.txt, use:
+    ```
+    openai-whisper
+    ```
+- Advanced users can try `whisper-cpp` for faster performance.
+
+---
+
 ## 📂 Recommended Project Structure
 
 ```
@@ -122,6 +154,22 @@ your-repo/
 
 ---
 
-## 💬 License
+## ⚠️ Legal & Ethical Notice
 
-MIT License — free to use and modify!
+This tool allows downloading audio from YouTube and SoundCloud for personal, educational, or research purposes only.
+
+- Downloading content from YouTube or SoundCloud may violate their Terms of Service unless the content is explicitly provided for download by the platform or the copyright owner.
+- By using this tool, you agree to comply with the terms of the respective platforms and all applicable copyright laws.
+- The developer is not responsible for any misuse of this tool. Please respect content creators’ rights and only download content you have permission to use.
+
+---
+
+## License
+
+This project is licensed under the MIT License.  
+See the LICENSE file for details.
+
+Copyright (c) 2025 Stephen [Your Last Name or GitHub Username]
+
+This project uses open source libraries such as yt-dlp, openai-whisper, torch, and others.  
+Please refer to their respective licenses for more information.

@@ -1,7 +1,6 @@
 yt-dlp
 openai
-whisper
-torch
+openai-whisper
 colorama
 python-dotenv
-request
+requests
