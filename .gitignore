@@ -6,6 +6,7 @@ __pycache__/
 audio/
 transcripts/
 summaries/
+soundcloud/
 *.log
 # Ignore ffmpeg binaries folder
 ffmpeg/
