@@ -137,6 +137,8 @@ your-repo/
 ├── audio/
 ├── transcripts/
 ├── summaries/
+├── soundcloud/
+├── combined_transcription/
 ├── main2.py
 ├── requirements.txt
 ├── .gitignore
