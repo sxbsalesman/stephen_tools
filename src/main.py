@@ -504,7 +504,7 @@ def main():
                 else:
                     print("Invalid selection.")
             except Exception as e:
-                print(f"An error occurred: {e}")
+                print(f"An error occurred: {e}") 
 
         elif choice == "3":
             combine_transcript_files()
