@@ -383,6 +383,45 @@ def check_server_running(base_url, backend):
         print(Fore.RED + f"Could not connect to {backend} server at {base_url}: {e}" + Style.RESET_ALL)
         return False
 
+def transcribe_local_audio():
+    """
+    Allows the user to select an audio file from the 'local' folder and transcribes it,
+    saving the transcript in the 'transcripts' folder.
+    """
+    local_dir = os.path.join(os.path.dirname(__file__), "local")
+    if not os.path.exists(local_dir):
+        print(Fore.RED + "No 'local' directory found." + Style.RESET_ALL)
+        return
+    audio_files = [f for f in os.listdir(local_dir) if f.lower().endswith(('.mp3', '.wav', '.m4a'))]
+    if not audio_files:
+        print("No audio files found in the 'local' directory.")
+        return
+    print("\nAvailable local audio files:")
+    for idx, fname in enumerate(audio_files, 1):
+        print(f"{idx}. {fname}")
+    file_choice = input("Select a file number to transcribe (or 'q' to return): ").strip()
+    if file_choice.lower() == "q" or file_choice == "":
+        print("Returning to main menu.")
+        return
+    try:
+        file_idx = int(file_choice) - 1
+        if 0 <= file_idx < len(audio_files):
+            audio_file = os.path.abspath(os.path.join(local_dir, audio_files[file_idx]))
+            print(f"Selected file: {audio_file}")
+            if not os.path.exists(audio_file):
+                print(f"File does not exist (double-check!): {audio_file}")
+                return
+            print("Transcribing audio...")
+            transcript_file = transcribe_audio(audio_file)
+            print(f"Transcript saved to: {transcript_file}")
+            with open(transcript_file, "r", encoding="utf-8") as f:
+                print("Transcript Preview:")
+                print(f.read(500))
+        else:
+            print("Invalid selection.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
 def main():
     """
     Main entry point for the application.
@@ -457,14 +496,15 @@ def main():
     while True:
         print(Fore.CYAN + "\nChoose an option:" + Style.RESET_ALL)
         print("1. Download a YouTube file for processing")
-        print("2. Select an audio file to transcribe")
-        print("3. Combine transcript files")
-        print("4. Start a chat session")
-        print("5. Summarize a transcript file")
-        print("6. Download a SoundCloud audio file")
-        print("7. Delete a file")
-        print("8. Exit")
-        choice = input(Fore.YELLOW + "Enter your choice (1/2/3/4/5/6/7/8): " + Style.RESET_ALL).strip()
+        print("2. Transcribe a local audio file")
+        print("3. Select an audio file to transcribe")
+        print("4. Combine transcript files")
+        print("5. Start a chat session")
+        print("6. Summarize a transcript file")
+        print("7. Download a SoundCloud audio file")
+        print("8. Delete a file")
+        print("9. Exit")
+        choice = input(Fore.YELLOW + "Enter your choice (1-9): " + Style.RESET_ALL).strip()
 
         if choice == "1":
             youtube_url = input(Fore.YELLOW + "Enter the YouTube Video URL: " + Style.RESET_ALL).strip()
@@ -476,6 +516,8 @@ def main():
                 print(Fore.RED + f"An error occurred: {e}" + Style.RESET_ALL)
 
         elif choice == "2":
+            transcribe_local_audio()
+        elif choice == "3":
             audio_files = list_audio_files()
             if not audio_files:
                 print("No audio files found in the audio directory.")
@@ -506,11 +548,11 @@ def main():
             except Exception as e:
                 print(f"An error occurred: {e}") 
 
-        elif choice == "3":
-            combine_transcript_files()
         elif choice == "4":
-            chat_session(model_name)
+            combine_transcript_files()
         elif choice == "5":
+            chat_session(model_name)
+        elif choice == "6":
             transcript_files = list_transcript_files()
             if not transcript_files:
                 print("No transcript files found in the transcripts directory.")
@@ -549,7 +591,7 @@ def main():
             except Exception as e:
                 print(f"An error occurred: {e}")
 
-        elif choice == "6":
+        elif choice == "7":
             soundcloud_url = input(Fore.YELLOW + "Enter the SoundCloud URL: " + Style.RESET_ALL).strip()
             try:
                 print("Downloading SoundCloud audio...")
@@ -557,9 +599,9 @@ def main():
                 print(Fore.GREEN + f"Audio downloaded to: {audio_file}" + Style.RESET_ALL)
             except Exception as e:
                 print(Fore.RED + f"An error occurred: {e}" + Style.RESET_ALL)
-        elif choice == "7":
-            delete_file_menu()
         elif choice == "8":
+            delete_file_menu()
+        elif choice == "9":
             print(Fore.CYAN + "Goodbye!" + Style.RESET_ALL)
             break
         else:
