@@ -678,6 +678,11 @@ def ocr_main():
                         f.write(text)
                     ocr_txt_files.append(txt_path)
                     print(Fore.GREEN + f"Saved OCR text to: {txt_path}" + Style.RESET_ALL)
+                    try:
+                        os.remove(img_path)
+                        print(Fore.YELLOW + f"Deleted image file: {img_path}" + Style.RESET_ALL)
+                    except Exception as e:
+                        print(Fore.RED + f"Error deleting image {img_path}: {e}" + Style.RESET_ALL)
                 except Exception as e:
                     print(Fore.RED + f"Error processing {img_path}: {e}" + Style.RESET_ALL)
             # Combine all OCR .txt files into one file

@@ -1,6 +1,9 @@
+pillow-heif
 yt-dlp
 openai
 openai-whisper
 colorama
 python-dotenv
 requests
+pytesseract
+Pillow
