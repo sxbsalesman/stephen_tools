@@ -1,8 +1,11 @@
+import pytesseract # type: ignore
+from PIL import Image # type: ignore
+import glob
 import os
 import requests # type: ignore
 
-# Always use the ffmpeg in the project directory
-ffmpeg_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'ffmpeg', 'bin', 'ffmpeg.exe'))
+ffmpeg_path = "/opt/homebrew/bin/ffmpeg"
+ffprobe_path = "/opt/homebrew/bin/ffprobe"
 os.environ["FFMPEG_BINARY"] = ffmpeg_path
 os.environ["PATH"] = os.path.dirname(ffmpeg_path) + os.pathsep + os.environ["PATH"]
 
@@ -33,12 +36,12 @@ def select_backend_and_model():
         base_url = "http://localhost:1234/v1"
         api_key = "sk-local"
         backend = "LM Studio"
-        model_name = "Mistral-7B-Instruct-v0.3-GGUF"
+        model_name = "mistralai/mistral-7b-instruct-v0.3"
     elif choice == "3":
         base_url = "http://localhost:11434/v1"
         api_key = "ollama"
         backend = "Ollama"
-        model_name = "mistral:instruct"
+        model_name = "mistralai/mistral-7b-instruct-v0.3"
     else:
         base_url = None
         print("\nYou selected OpenAI Cloud.")
@@ -47,6 +50,8 @@ def select_backend_and_model():
             api_key = os.environ.get("OPENAI_API_KEY")
         backend = "OpenAI Cloud"
         model_name = "gpt-4o"
+        backend = "OpenAI Cloud"
+    model_name = "gpt-4o"
 
     print(f"Selected backend: {backend}")
     print(f"Default model set: {model_name}")
@@ -66,7 +71,6 @@ def download_audio(youtube_url, output_path="audio"):
     """
     if not os.path.exists(output_path):
         os.makedirs(output_path)
-    ffmpeg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'ffmpeg', 'bin'))
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': os.path.join(output_path, '%(title)s.%(ext)s'),
@@ -76,7 +80,7 @@ def download_audio(youtube_url, output_path="audio"):
             'preferredquality': '192',
         }],
         'quiet': False,
-        'ffmpeg_location': ffmpeg_dir,
+        'ffmpeg_location': ffmpeg_path,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(youtube_url, download=True)
@@ -92,7 +96,6 @@ def download_soundcloud_audio(soundcloud_url, output_path="soundcloud"):
     """
     if not os.path.exists(output_path):
         os.makedirs(output_path)
-    ffmpeg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'ffmpeg', 'bin'))
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': os.path.join(output_path, '%(title)s.%(ext)s'),
@@ -102,7 +105,7 @@ def download_soundcloud_audio(soundcloud_url, output_path="soundcloud"):
             'preferredquality': '192',
         }],
         'quiet': False,
-        'ffmpeg_location': ffmpeg_dir,
+        'ffmpeg_location': ffmpeg_path,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(soundcloud_url, download=True)
@@ -148,7 +151,7 @@ def list_transcript_files(transcript_dir="transcripts"):
         return []
     return [f for f in os.listdir(transcript_path) if f.lower().endswith('.txt')]
 
-def chat_session(model_name):
+def chat_session(model_name, backend):
     """
     Starts an interactive chat session with the selected LLM model.
     Allows the user to optionally provide a system prompt and/or transcript file as context.
@@ -455,8 +458,8 @@ def main():
         try:
             print(Fore.CYAN + "\nAvailable models on this backend:" + Style.RESET_ALL)
             models = client.models.list()
-            for m in models.data:
-                print(" -", m.id)
+            for idx, m in enumerate(models.data, 1):
+                print(f" {idx}. {m.id}")
             print()
         except Exception as e:
             print(Fore.RED + f"Could not list models: {e}" + Style.RESET_ALL)
@@ -474,7 +477,7 @@ def main():
 
     # Initial greeting and instructions from the assistant
     response = client.chat.completions.create(
-        model="Mistral-7B-Instruct-v0.3-GGUF",
+        model="mistralai/mistral-7b-instruct-v0.3",
         messages=[{
             "role": "user",
             "content": (
@@ -503,8 +506,9 @@ def main():
         print("6. Summarize a transcript file")
         print("7. Download a SoundCloud audio file")
         print("8. Delete a file")
-        print("9. Exit")
-        choice = input(Fore.YELLOW + "Enter your choice (1-9): " + Style.RESET_ALL).strip()
+        print("9. OCR images in a folder")
+        print("10. Exit")
+        choice = input(Fore.YELLOW + "Enter your choice (1-10): " + Style.RESET_ALL).strip()
 
         if choice == "1":
             youtube_url = input(Fore.YELLOW + "Enter the YouTube Video URL: " + Style.RESET_ALL).strip()
@@ -551,7 +555,7 @@ def main():
         elif choice == "4":
             combine_transcript_files()
         elif choice == "5":
-            chat_session(model_name)
+            chat_session(model_name, backend)
         elif choice == "6":
             transcript_files = list_transcript_files()
             if not transcript_files:
@@ -602,10 +606,112 @@ def main():
         elif choice == "8":
             delete_file_menu()
         elif choice == "9":
+            ocr_main()
+        elif choice == "10":
             print(Fore.CYAN + "Goodbye!" + Style.RESET_ALL)
             break
+def ocr_main():
+    """
+    Lists folders in the 'ocr' directory, lets user choose one, then runs OCR on all images in that folder,
+    saving extracted text to files in the same folder.
+    """
+    ocr_root = os.path.join(os.path.dirname(__file__), '..', 'ocr')
+    if not os.path.exists(ocr_root):
+        print(Fore.RED + "OCR directory does not exist." + Style.RESET_ALL)
+        return
+    folders = [f for f in os.listdir(ocr_root) if os.path.isdir(os.path.join(ocr_root, f))]
+    if not folders:
+        print(Fore.RED + "No folders found in OCR directory." + Style.RESET_ALL)
+        return
+    print("\nAvailable OCR folders:")
+    for idx, folder in enumerate(folders, 1):
+        print(f"{idx}. {folder}")
+    folder_choice = input(Fore.YELLOW + "Select a folder number to process (or 'q' to return): " + Style.RESET_ALL).strip()
+    if folder_choice.lower() == "q" or folder_choice == "":
+        print("Returning to main menu.")
+        return
+    try:
+        folder_idx = int(folder_choice) - 1
+        if 0 <= folder_idx < len(folders):
+            chosen_folder = os.path.join(ocr_root, folders[folder_idx])
+            image_files = glob.glob(os.path.join(chosen_folder, '*.png')) + \
+                         glob.glob(os.path.join(chosen_folder, '*.jpg')) + \
+                         glob.glob(os.path.join(chosen_folder, '*.jpeg')) + \
+                         glob.glob(os.path.join(chosen_folder, '*.bmp')) + \
+                         glob.glob(os.path.join(chosen_folder, '*.heic')) + \
+                         glob.glob(os.path.join(chosen_folder, '*.HEIC')) + \
+                         glob.glob(os.path.join(chosen_folder, '*.heif')) + \
+                         glob.glob(os.path.join(chosen_folder, '*.HEIF'))
+            if not image_files:
+                print(Fore.RED + "No image files found in selected folder." + Style.RESET_ALL)
+                return
+            image_files.sort()  # Sort files by filename
+            print(f"\nProcessing {len(image_files)} images in '{folders[folder_idx]}' (sorted by filename)...")
+            ocr_txt_files = []
+            for img_path in image_files:
+                try:
+                    ext = os.path.splitext(img_path)[1].lower()
+                    if ext in ['.heic', '.heif']:
+                        try:
+                            import pillow_heif
+                            heif_file = pillow_heif.read_heif(img_path)
+                            img = Image.frombytes(
+                                heif_file.mode,
+                                heif_file.size,
+                                heif_file.data,
+                                "raw"
+                            )
+                            png_path = os.path.splitext(img_path)[0] + '_converted.png'
+                            img.save(png_path, format='PNG')
+                            print(Fore.YELLOW + f"Converted {img_path} to {png_path}" + Style.RESET_ALL)
+                            img_path = png_path
+                        except ImportError:
+                            print(Fore.RED + "pillow-heif is required for HEIC/HEIF support. Install with 'pip install pillow-heif'." + Style.RESET_ALL)
+                            continue
+                        except Exception as e:
+                            print(Fore.RED + f"Error converting {img_path}: {e}" + Style.RESET_ALL)
+                            continue
+                    img = Image.open(img_path)
+                    text = pytesseract.image_to_string(img, config='--psm 6')
+                    txt_path = os.path.splitext(img_path)[0] + '.txt'
+                    with open(txt_path, 'w', encoding='utf-8') as f:
+                        f.write(text)
+                    ocr_txt_files.append(txt_path)
+                    print(Fore.GREEN + f"Saved OCR text to: {txt_path}" + Style.RESET_ALL)
+                except Exception as e:
+                    print(Fore.RED + f"Error processing {img_path}: {e}" + Style.RESET_ALL)
+            # Combine all OCR .txt files into one file
+            combined_text = ""
+            if ocr_txt_files:
+                combined_path = os.path.join(chosen_folder, 'combined_ocr.txt')
+                with open(combined_path, 'w', encoding='utf-8') as fout:
+                    for txt_file in ocr_txt_files:
+                        with open(txt_file, 'r', encoding='utf-8') as fin:
+                            section = f"--- {os.path.basename(txt_file)} ---\n" + fin.read() + "\n\n"
+                            fout.write(section)
+                            combined_text += section
+                print(Fore.GREEN + f"Combined OCR text saved to: {combined_path}" + Style.RESET_ALL)
+                # Send combined text to local LLM for cleanup/summarization
+                print(Fore.CYAN + "\nSending combined OCR text to local LLM for cleanup/summarization..." + Style.RESET_ALL)
+                try:
+                    response = client.chat.completions.create(
+                        model="mistralai/mistral-7b-instruct-v0.3",
+                        messages=[{
+                            "role": "user",
+                            "content": "Clean up and summarize the following OCR text. Correct any obvious errors and return a readable version.\n\n" + combined_text
+                        }]
+                    )
+                    llm_output = response.choices[0].message.content
+                    llm_path = os.path.join(chosen_folder, 'combined_ocr_llm.txt')
+                    with open(llm_path, 'w', encoding='utf-8') as f:
+                        f.write(llm_output)
+                    print(Fore.GREEN + f"LLM cleaned/summarized OCR text saved to: {llm_path}" + Style.RESET_ALL)
+                except Exception as e:
+                    print(Fore.RED + f"Error sending OCR text to LLM: {e}" + Style.RESET_ALL)
         else:
-            print(Fore.RED + "Invalid choice. Please enter a valid option." + Style.RESET_ALL)
+            print(Fore.RED + "Invalid selection." + Style.RESET_ALL)
+    except Exception as e:
+        print(Fore.RED + f"An error occurred: {e}" + Style.RESET_ALL)
 
 if __name__ == "__main__":
     main()
