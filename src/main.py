@@ -3,13 +3,45 @@ from PIL import Image # type: ignore
 import glob
 import os
 import requests # type: ignore
+import shutil
+import platform
 
-ffmpeg_path = "/opt/homebrew/bin/ffmpeg"
-ffprobe_path = "/opt/homebrew/bin/ffprobe"
-os.environ["FFMPEG_BINARY"] = ffmpeg_path
-os.environ["PATH"] = os.path.dirname(ffmpeg_path) + os.pathsep + os.environ["PATH"]
+# Auto-detect ffmpeg location based on OS
+def get_ffmpeg_path():
+    """
+    Auto-detects ffmpeg location. Works on Ubuntu, macOS, and Windows.
+    """
+    # First, check if ffmpeg is in system PATH
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+    
+    # Fallback to OS-specific locations
+    if platform.system() == "Darwin":  # macOS
+        if os.path.exists("/opt/homebrew/bin/ffmpeg"):
+            return "/opt/homebrew/bin/ffmpeg"
+        elif os.path.exists("/usr/local/bin/ffmpeg"):
+            return "/usr/local/bin/ffmpeg"
+    elif platform.system() == "Linux":  # Ubuntu/Linux
+        if os.path.exists("/usr/bin/ffmpeg"):
+            return "/usr/bin/ffmpeg"
+    elif platform.system() == "Windows":
+        # Check local project folder first
+        local_path = os.path.join(os.path.dirname(__file__), "..", "ffmpeg", "bin", "ffmpeg.exe")
+        if os.path.exists(local_path):
+            return local_path
+    
+    return None
 
-# print("Using ffmpeg at:", ffmpeg_path)
+ffmpeg_path = get_ffmpeg_path()
+if ffmpeg_path:
+    os.environ["FFMPEG_BINARY"] = ffmpeg_path
+    print(f"Using ffmpeg at: {ffmpeg_path}")
+else:
+    print("⚠️  FFmpeg not found! Please install it:")
+    print("   Ubuntu/Linux: sudo apt install ffmpeg")
+    print("   macOS: brew install ffmpeg")
+    print("   Windows: Download from https://ffmpeg.org/download.html")
 
 import yt_dlp # type: ignore
 import whisper # type: ignore
@@ -26,7 +58,7 @@ def select_backend_and_model():
     Returns the base_url, api_key, backend name, and default model name for the chosen backend.
     """
     print("\nChoose which LLM backend to use:")
-    print("1. OpenAI Cloud (default)")
+    print("1. OpenAI Cloud (default) - gpt-4o, gpt-4o-mini, gpt-4-turbo, etc.")
     print("2. LM Studio (local)")
     print("3. Ollama (local)")
 
@@ -36,25 +68,38 @@ def select_backend_and_model():
         base_url = "http://localhost:1234/v1"
         api_key = "sk-local"
         backend = "LM Studio"
-        model_name = "mistralai/mistral-7b-instruct-v0.3"
+        model_name = "local-model"
     elif choice == "3":
         base_url = "http://localhost:11434/v1"
         api_key = "ollama"
         backend = "Ollama"
-        model_name = "mistralai/mistral-7b-instruct-v0.3"
+        # Check which models are available in Ollama
+        try:
+            response = requests.get(f"{base_url}/models", timeout=5)
+            if response.status_code == 200:
+                models_data = response.json()
+                available = [m.get('model') or m.get('name') for m in models_data.get('data', [])]
+                if available:
+                    model_name = available[0]  # Use first available model as default
+                else:
+                    model_name = "llama3:8b"  # Fallback if no models found
+            else:
+                model_name = "llama3:8b"  # Fallback
+        except Exception:
+            model_name = "llama3:8b"  # Fallback if Ollama not running yet
     else:
         base_url = None
         print("\nYou selected OpenAI Cloud.")
-        api_key = input("Enter your OpenAI API key (or press Enter to use the .env/environment variable): ").strip()
+        api_key = input("Enter your OpenAI API key (or press Enter to use OPENAI_API_KEY environment variable): ").strip()
         if not api_key:
             api_key = os.environ.get("OPENAI_API_KEY")
+            if not api_key:
+                print(Fore.RED + "No API key found! Please set OPENAI_API_KEY environment variable or enter it above." + Style.RESET_ALL)
         backend = "OpenAI Cloud"
         model_name = "gpt-4o"
-        backend = "OpenAI Cloud"
-    model_name = "gpt-4o"
 
-    print(f"Selected backend: {backend}")
-    print(f"Default model set: {model_name}")
+    print(f"\n{Fore.GREEN}Selected backend: {backend}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}Default model: {model_name}{Style.RESET_ALL}")
 
    ## device = "cuda" if torch.cuda.is_available() else "cpu"
    ## model_name = whisper.load_model("base", device=device)
@@ -453,48 +498,64 @@ def main():
         backend = "OpenAI Cloud"
         default_model = "gpt-4o"
 
-    # List available models if not using the default (OpenAI Cloud)
-    if backend != "OpenAI Cloud":
+    # List available models
+    available_models = []
+    if backend == "OpenAI Cloud":
+        # Show popular OpenAI models
+        print(Fore.CYAN + "\nPopular OpenAI models:" + Style.RESET_ALL)
+        popular_models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"]
+        for idx, model in enumerate(popular_models, 1):
+            print(f" {idx}. {model}")
+            available_models.append(model)
+        print()
+    else:
+        # List models from local backend
         try:
             print(Fore.CYAN + "\nAvailable models on this backend:" + Style.RESET_ALL)
             models = client.models.list()
             for idx, m in enumerate(models.data, 1):
                 print(f" {idx}. {m.id}")
+                available_models.append(m.id)
             print()
         except Exception as e:
             print(Fore.RED + f"Could not list models: {e}" + Style.RESET_ALL)
 
     print("\n")
-    user_input = input(Fore.YELLOW + f"Enter the model name to use (or press Enter to use default: {default_model}): " + Style.RESET_ALL).strip()
+    user_input = input(Fore.YELLOW + f"Enter the model name or number (or press Enter to use default: {default_model}): " + Style.RESET_ALL).strip()
     print("\n")
-    model_name = user_input if user_input else default_model
+    
+    # Check if user entered a number to select from the list
+    if user_input.isdigit() and available_models:
+        model_idx = int(user_input) - 1
+        if 0 <= model_idx < len(available_models):
+            model_name = available_models[model_idx]
+        else:
+            print(Fore.YELLOW + f"Invalid selection. Using default: {default_model}" + Style.RESET_ALL)
+            model_name = default_model
+    else:
+        model_name = user_input if user_input else default_model
+    
     print(Fore.GREEN + f"Using model: {model_name}" + Style.RESET_ALL)
 
-    if isinstance(model_name, str):
-        if "instruct" not in model_name.lower() and "chat" not in model_name.lower():
-            print(Fore.YELLOW + "Warning: You are not using an 'instruct' or 'chat' model. "
-                  "Responses may not follow instructions as expected." + Style.RESET_ALL)
-
-    # Initial greeting and instructions from the assistant
-    response = client.chat.completions.create(
-        model="mistralai/mistral-7b-instruct-v0.3",
-        messages=[{
-            "role": "user",
-            "content": (
-                "You are an assistant for a YouTube audio downloader and transcription tool. "
-                "Greet the user and briefly explain that you can help download YouTube audio, transcribe it, "
-                "and summarize transcripts using local AI models."
-            )
-        }]
-    )
-    print(response.choices[0].message.content)
-
+    # Check if local backend server is running first
     if backend in ["LM Studio", "Ollama"]:
         if not check_server_running(base_url, backend):
             print(Fore.RED + f"\n{backend} server is not running. Please start it and try again." + Style.RESET_ALL)
-            return  # or sys.exit(1)
+            return
         else:
             print(Fore.GREEN + f"{backend} server is running and ready!" + Style.RESET_ALL)
+
+    # Optional: Initial greeting from the assistant (skipped for faster startup)
+    # Uncomment below to enable greeting message
+    # try:
+    #     response = client.chat.completions.create(
+    #         model=model_name,
+    #         messages=[{"role": "user", "content": "Say hello and briefly introduce yourself as a YouTube transcription assistant."}],
+    #         timeout=10
+    #     )
+    #     print(f"\n{response.choices[0].message.content}\n")
+    # except Exception as e:
+    #     pass  # Skip greeting if it fails
 
     while True:
         print(Fore.CYAN + "\nChoose an option:" + Style.RESET_ALL)
@@ -612,45 +673,128 @@ def main():
             break
 def ocr_main():
     """
-    Lists folders in the 'ocr' directory, lets user choose one, then runs OCR on all images in that folder,
-    saving extracted text to files in the same folder.
+    Processes images in the OCR directory using AI vision model (qwen3-vl:8b via Ollama).
+    Supports both direct images in src/ocr/ or organized in subfolders under src/ocr/.
+    Falls back to Tesseract OCR if Ollama is not available.
     """
-    ocr_root = os.path.join(os.path.dirname(__file__), '..', 'ocr')
-    if not os.path.exists(ocr_root):
-        print(Fore.RED + "OCR directory does not exist." + Style.RESET_ALL)
-        return
-    folders = [f for f in os.listdir(ocr_root) if os.path.isdir(os.path.join(ocr_root, f))]
-    if not folders:
-        print(Fore.RED + "No folders found in OCR directory." + Style.RESET_ALL)
-        return
-    print("\nAvailable OCR folders:")
-    for idx, folder in enumerate(folders, 1):
-        print(f"{idx}. {folder}")
-    folder_choice = input(Fore.YELLOW + "Select a folder number to process (or 'q' to return): " + Style.RESET_ALL).strip()
-    if folder_choice.lower() == "q" or folder_choice == "":
-        print("Returning to main menu.")
-        return
+    # Check if Ollama with vision model is available
+    use_ai_ocr = False
+    vision_model = "qwen3-vl:8b"
+    
     try:
-        folder_idx = int(folder_choice) - 1
-        if 0 <= folder_idx < len(folders):
-            chosen_folder = os.path.join(ocr_root, folders[folder_idx])
-            image_files = glob.glob(os.path.join(chosen_folder, '*.png')) + \
-                         glob.glob(os.path.join(chosen_folder, '*.jpg')) + \
-                         glob.glob(os.path.join(chosen_folder, '*.jpeg')) + \
-                         glob.glob(os.path.join(chosen_folder, '*.bmp')) + \
-                         glob.glob(os.path.join(chosen_folder, '*.heic')) + \
-                         glob.glob(os.path.join(chosen_folder, '*.HEIC')) + \
-                         glob.glob(os.path.join(chosen_folder, '*.heif')) + \
-                         glob.glob(os.path.join(chosen_folder, '*.HEIF'))
-            if not image_files:
-                print(Fore.RED + "No image files found in selected folder." + Style.RESET_ALL)
+        response = requests.get("http://localhost:11434/v1/models", timeout=3)
+        if response.status_code == 200:
+            models_data = response.json()
+            available_models = [m.get('model') or m.get('name') for m in models_data.get('data', [])]
+            # Check for vision-capable models
+            vision_models = [m for m in available_models if 'vl' in m.lower() or 'vision' in m.lower() or 'llava' in m.lower()]
+            if vision_models:
+                use_ai_ocr = True
+                vision_model = vision_models[0]  # Use first available vision model
+                print(Fore.GREEN + f"✓ AI OCR enabled using model: {vision_model}" + Style.RESET_ALL)
+            else:
+                print(Fore.YELLOW + "⚠ No vision models found in Ollama. Using traditional Tesseract OCR." + Style.RESET_ALL)
+        else:
+            print(Fore.YELLOW + "⚠ Ollama not available. Using traditional Tesseract OCR." + Style.RESET_ALL)
+    except Exception:
+        print(Fore.YELLOW + "⚠ Could not connect to Ollama. Using traditional Tesseract OCR." + Style.RESET_ALL)
+    
+    # Look for ocr directory in the same folder as main.py (src/ocr)
+    ocr_root = os.path.join(os.path.dirname(__file__), 'ocr')
+    if not os.path.exists(ocr_root):
+        print(Fore.RED + f"OCR directory does not exist at: {ocr_root}" + Style.RESET_ALL)
+        print(Fore.YELLOW + "Please create the directory: src/ocr/" + Style.RESET_ALL)
+        return
+    
+    # Check for subfolders
+    folders = [f for f in os.listdir(ocr_root) if os.path.isdir(os.path.join(ocr_root, f))]
+    
+    # Check for images directly in ocr root
+    direct_images = glob.glob(os.path.join(ocr_root, '*.png')) + \
+                    glob.glob(os.path.join(ocr_root, '*.jpg')) + \
+                    glob.glob(os.path.join(ocr_root, '*.jpeg')) + \
+                    glob.glob(os.path.join(ocr_root, '*.bmp')) + \
+                    glob.glob(os.path.join(ocr_root, '*.heic')) + \
+                    glob.glob(os.path.join(ocr_root, '*.HEIC')) + \
+                    glob.glob(os.path.join(ocr_root, '*.heif')) + \
+                    glob.glob(os.path.join(ocr_root, '*.HEIF'))
+    
+    if not folders and not direct_images:
+        print(Fore.RED + "No folders or images found in OCR directory." + Style.RESET_ALL)
+        return
+    
+    # If there are images directly in ocr root, process them
+    if direct_images and not folders:
+        print(Fore.CYAN + f"\nFound {len(direct_images)} images in OCR directory." + Style.RESET_ALL)
+        process_choice = input(Fore.YELLOW + "Process these images? (y/n): " + Style.RESET_ALL).strip().lower()
+        if process_choice != "y":
+            print("Returning to main menu.")
+            return
+        chosen_folder = ocr_root
+    # If both exist, let user choose
+    elif direct_images and folders:
+        print("\nOptions:")
+        print(f"0. Process {len(direct_images)} images in OCR root directory")
+        for idx, folder in enumerate(folders, 1):
+            print(f"{idx}. {folder}")
+        folder_choice = input(Fore.YELLOW + "Select an option (or 'q' to return): " + Style.RESET_ALL).strip()
+        if folder_choice.lower() == "q" or folder_choice == "":
+            print("Returning to main menu.")
+            return
+        try:
+            choice_idx = int(folder_choice)
+            if choice_idx == 0:
+                chosen_folder = ocr_root
+            elif 1 <= choice_idx <= len(folders):
+                chosen_folder = os.path.join(ocr_root, folders[choice_idx - 1])
+            else:
+                print(Fore.RED + "Invalid selection." + Style.RESET_ALL)
                 return
-            image_files.sort()  # Sort files by filename
-            print(f"\nProcessing {len(image_files)} images in '{folders[folder_idx]}' (sorted by filename)...")
-            ocr_txt_files = []
-            for img_path in image_files:
+        except ValueError:
+            print(Fore.RED + "Invalid input." + Style.RESET_ALL)
+            return
+    # Only folders exist
+    else:
+        print("\nAvailable OCR folders:")
+        for idx, folder in enumerate(folders, 1):
+            print(f"{idx}. {folder}")
+        folder_choice = input(Fore.YELLOW + "Select a folder number to process (or 'q' to return): " + Style.RESET_ALL).strip()
+        if folder_choice.lower() == "q" or folder_choice == "":
+            print("Returning to main menu.")
+            return
+        try:
+            folder_idx = int(folder_choice) - 1
+            if 0 <= folder_idx < len(folders):
+                chosen_folder = os.path.join(ocr_root, folders[folder_idx])
+            else:
+                print(Fore.RED + "Invalid selection." + Style.RESET_ALL)
+                return
+        except ValueError:
+            print(Fore.RED + "Invalid input." + Style.RESET_ALL)
+            return
+    
+    # Now process the chosen folder
+    try:
+        image_files = glob.glob(os.path.join(chosen_folder, '*.png')) + \
+                     glob.glob(os.path.join(chosen_folder, '*.jpg')) + \
+                     glob.glob(os.path.join(chosen_folder, '*.jpeg')) + \
+                     glob.glob(os.path.join(chosen_folder, '*.bmp')) + \
+                     glob.glob(os.path.join(chosen_folder, '*.heic')) + \
+                     glob.glob(os.path.join(chosen_folder, '*.HEIC')) + \
+                     glob.glob(os.path.join(chosen_folder, '*.heif')) + \
+                     glob.glob(os.path.join(chosen_folder, '*.HEIF'))
+        if not image_files:
+            print(Fore.RED + "No image files found in selected folder." + Style.RESET_ALL)
+            return
+        image_files.sort()  # Sort files by filename
+        folder_name = os.path.basename(chosen_folder) if chosen_folder != ocr_root else "OCR root"
+        print(f"\nProcessing {len(image_files)} images in '{folder_name}' (sorted by filename)...")
+        ocr_txt_files = []
+        for img_path in image_files:
                 try:
                     ext = os.path.splitext(img_path)[1].lower()
+                    original_path = img_path  # Save original path for deletion later
+                    
                     if ext in ['.heic', '.heif']:
                         try:
                             import pillow_heif
@@ -665,56 +809,120 @@ def ocr_main():
                             img.save(png_path, format='PNG')
                             print(Fore.YELLOW + f"Converted {img_path} to {png_path}" + Style.RESET_ALL)
                             img_path = png_path
+                            # Re-open the PNG for preprocessing
+                            img = Image.open(img_path)
                         except ImportError:
                             print(Fore.RED + "pillow-heif is required for HEIC/HEIF support. Install with 'pip install pillow-heif'." + Style.RESET_ALL)
                             continue
                         except Exception as e:
                             print(Fore.RED + f"Error converting {img_path}: {e}" + Style.RESET_ALL)
                             continue
-                    img = Image.open(img_path)
-                    text = pytesseract.image_to_string(img, config='--psm 6')
+                    else:
+                        # Load non-HEIC images
+                        img = Image.open(img_path)
+                    
+                    # Convert to RGB first (in case of RGBA), then to grayscale
+                    if img.mode in ('RGBA', 'LA', 'P'):
+                        img = img.convert('RGB')
+                    img = img.convert('L')
+                    
+                    # Advanced preprocessing for better OCR
+                    from PIL import ImageEnhance, ImageFilter, ImageOps
+                    
+                    # Resize if image is too small (upscale for better OCR)
+                    width, height = img.size
+                    if width < 1800 or height < 1800:
+                        scale = max(1800 / width, 1800 / height)
+                        new_size = (int(width * scale), int(height * scale))
+                        img = img.resize(new_size, Image.Resampling.LANCZOS)
+                    
+                    # Enhance contrast
+                    enhancer = ImageEnhance.Contrast(img)
+                    img = enhancer.enhance(2.5)
+                    
+                    # Enhance sharpness
+                    enhancer = ImageEnhance.Sharpness(img)
+                    img = enhancer.enhance(2.0)
+                    
+                    # Apply adaptive thresholding for better text extraction
+                    # This binarizes the image (black text on white background)
+                    img = ImageOps.autocontrast(img, cutoff=2)
+                    
+                    # Perform OCR based on available method
+                    print(Fore.CYAN + f"Running OCR on {os.path.basename(img_path)}..." + Style.RESET_ALL)
+                    
+                    if use_ai_ocr:
+                        # Use AI vision model for OCR
+                        try:
+                            import base64
+                            from io import BytesIO
+                            
+                            # Convert image to base64 for API
+                            buffer = BytesIO()
+                            # Convert back to RGB for JPEG encoding
+                            img_rgb = img.convert('RGB')
+                            img_rgb.save(buffer, format='JPEG', quality=95)
+                            img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                            
+                            # Call Ollama vision model
+                            ollama_response = requests.post(
+                                "http://localhost:11434/api/generate",
+                                json={
+                                    "model": vision_model,
+                                    "prompt": "Extract all text from this image. Provide only the text content, maintaining the original formatting and structure. Do not add any commentary or descriptions.",
+                                    "images": [img_base64],
+                                    "stream": False
+                                },
+                                timeout=120
+                            )
+                            
+                            if ollama_response.status_code == 200:
+                                result = ollama_response.json()
+                                best_text = result.get('response', '')
+                                print(Fore.GREEN + f"✓ AI OCR completed" + Style.RESET_ALL)
+                            else:
+                                print(Fore.YELLOW + f"⚠ AI OCR failed, falling back to Tesseract" + Style.RESET_ALL)
+                                best_text = pytesseract.image_to_string(img, config='--psm 3 --oem 1')
+                        except Exception as e:
+                            print(Fore.YELLOW + f"⚠ AI OCR error: {e}, using Tesseract" + Style.RESET_ALL)
+                            best_text = pytesseract.image_to_string(img, config='--psm 3 --oem 1')
+                    else:
+                        # Use traditional Tesseract OCR with PSM 3
+                        best_text = pytesseract.image_to_string(img, config='--psm 3 --oem 1')
+                    
                     txt_path = os.path.splitext(img_path)[0] + '.txt'
                     with open(txt_path, 'w', encoding='utf-8') as f:
-                        f.write(text)
+                        f.write(best_text)
                     ocr_txt_files.append(txt_path)
                     print(Fore.GREEN + f"Saved OCR text to: {txt_path}" + Style.RESET_ALL)
+                    
+                    # Delete original HEIC file if it was converted
+                    if original_path != img_path and os.path.exists(original_path):
+                        try:
+                            os.remove(original_path)
+                            print(Fore.YELLOW + f"Deleted original HEIC file: {original_path}" + Style.RESET_ALL)
+                        except Exception as e:
+                            print(Fore.RED + f"Error deleting {original_path}: {e}" + Style.RESET_ALL)
+                    
+                    # Delete the processed image (PNG or original non-HEIC)
                     try:
                         os.remove(img_path)
-                        print(Fore.YELLOW + f"Deleted image file: {img_path}" + Style.RESET_ALL)
+                        print(Fore.YELLOW + f"Deleted processed image: {img_path}" + Style.RESET_ALL)
                     except Exception as e:
                         print(Fore.RED + f"Error deleting image {img_path}: {e}" + Style.RESET_ALL)
                 except Exception as e:
                     print(Fore.RED + f"Error processing {img_path}: {e}" + Style.RESET_ALL)
-            # Combine all OCR .txt files into one file
-            combined_text = ""
-            if ocr_txt_files:
-                combined_path = os.path.join(chosen_folder, 'combined_ocr.txt')
-                with open(combined_path, 'w', encoding='utf-8') as fout:
-                    for txt_file in ocr_txt_files:
-                        with open(txt_file, 'r', encoding='utf-8') as fin:
-                            section = f"--- {os.path.basename(txt_file)} ---\n" + fin.read() + "\n\n"
-                            fout.write(section)
-                            combined_text += section
-                print(Fore.GREEN + f"Combined OCR text saved to: {combined_path}" + Style.RESET_ALL)
-                # Send combined text to local LLM for cleanup/summarization
-                print(Fore.CYAN + "\nSending combined OCR text to local LLM for cleanup/summarization..." + Style.RESET_ALL)
-                try:
-                    response = client.chat.completions.create(
-                        model="mistralai/mistral-7b-instruct-v0.3",
-                        messages=[{
-                            "role": "user",
-                            "content": "Clean up and summarize the following OCR text. Correct any obvious errors and return a readable version.\n\n" + combined_text
-                        }]
-                    )
-                    llm_output = response.choices[0].message.content
-                    llm_path = os.path.join(chosen_folder, 'combined_ocr_llm.txt')
-                    with open(llm_path, 'w', encoding='utf-8') as f:
-                        f.write(llm_output)
-                    print(Fore.GREEN + f"LLM cleaned/summarized OCR text saved to: {llm_path}" + Style.RESET_ALL)
-                except Exception as e:
-                    print(Fore.RED + f"Error sending OCR text to LLM: {e}" + Style.RESET_ALL)
-        else:
-            print(Fore.RED + "Invalid selection." + Style.RESET_ALL)
+        # Combine all OCR .txt files into one file
+        combined_text = ""
+        if ocr_txt_files:
+            combined_path = os.path.join(chosen_folder, 'combined_ocr.txt')
+            with open(combined_path, 'w', encoding='utf-8') as fout:
+                for txt_file in ocr_txt_files:
+                    with open(txt_file, 'r', encoding='utf-8') as fin:
+                        section = f"--- {os.path.basename(txt_file)} ---\n" + fin.read() + "\n\n"
+                        fout.write(section)
+                        combined_text += section
+            print(Fore.GREEN + f"Combined OCR text saved to: {combined_path}" + Style.RESET_ALL)
     except Exception as e:
         print(Fore.RED + f"An error occurred: {e}" + Style.RESET_ALL)
 
