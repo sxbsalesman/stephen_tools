@@ -13,3 +13,4 @@ ffmpeg/
 ffmpeg
 src/.DS_Store
 .DS_Store
+ocr/

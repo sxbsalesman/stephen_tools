@@ -568,8 +568,9 @@ def main():
         print("7. Download a SoundCloud audio file")
         print("8. Delete a file")
         print("9. OCR images in a folder")
-        print("10. Exit")
-        choice = input(Fore.YELLOW + "Enter your choice (1-10): " + Style.RESET_ALL).strip()
+        print("10. Combine images to PDF")
+        print("11. Exit")
+        choice = input(Fore.YELLOW + "Enter your choice (1-11): " + Style.RESET_ALL).strip()
 
         if choice == "1":
             youtube_url = input(Fore.YELLOW + "Enter the YouTube Video URL: " + Style.RESET_ALL).strip()
@@ -669,35 +670,240 @@ def main():
         elif choice == "9":
             ocr_main()
         elif choice == "10":
+            combine_images_to_pdf()
+        elif choice == "11":
             print(Fore.CYAN + "Goodbye!" + Style.RESET_ALL)
             break
+def combine_images_to_pdf():
+    """
+    Combines images from the OCR directory into a single PDF file.
+    Supports both direct images in src/ocr/ or organized in subfolders.
+    """
+    try:
+        from PIL import Image as PILImage
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.utils import ImageReader
+    except ImportError:
+        print(Fore.RED + "reportlab is required for PDF creation. Install with 'pip install reportlab'." + Style.RESET_ALL)
+        return
+    
+    # Look for ocr directory
+    ocr_root = os.path.join(os.path.dirname(__file__), 'ocr')
+    if not os.path.exists(ocr_root):
+        print(Fore.RED + f"OCR directory does not exist at: {ocr_root}" + Style.RESET_ALL)
+        return
+    
+    # Check for subfolders and direct images
+    folders = [f for f in os.listdir(ocr_root) if os.path.isdir(os.path.join(ocr_root, f))]
+    direct_images = glob.glob(os.path.join(ocr_root, '*.png')) + \
+                    glob.glob(os.path.join(ocr_root, '*.PNG')) + \
+                    glob.glob(os.path.join(ocr_root, '*.jpg')) + \
+                    glob.glob(os.path.join(ocr_root, '*.JPG')) + \
+                    glob.glob(os.path.join(ocr_root, '*.jpeg')) + \
+                    glob.glob(os.path.join(ocr_root, '*.JPEG')) + \
+                    glob.glob(os.path.join(ocr_root, '*.bmp')) + \
+                    glob.glob(os.path.join(ocr_root, '*.BMP')) + \
+                    glob.glob(os.path.join(ocr_root, '*.heic')) + \
+                    glob.glob(os.path.join(ocr_root, '*.HEIC'))
+    
+    if not folders and not direct_images:
+        print(Fore.RED + "No folders or images found in OCR directory." + Style.RESET_ALL)
+        return
+    
+    # Let user choose folder
+    chosen_folder = None
+    if direct_images and not folders:
+        print(Fore.CYAN + f"\nFound {len(direct_images)} images in OCR root directory." + Style.RESET_ALL)
+        process_choice = input(Fore.YELLOW + "Create PDF from these images? (y/n): " + Style.RESET_ALL).strip().lower()
+        if process_choice != "y":
+            return
+        chosen_folder = ocr_root
+    elif direct_images and folders:
+        print("\nOptions:")
+        print(f"0. Use {len(direct_images)} images from OCR root directory")
+        for idx, folder in enumerate(folders, 1):
+            print(f"{idx}. {folder}")
+        folder_choice = input(Fore.YELLOW + "Select an option (or 'q' to return): " + Style.RESET_ALL).strip()
+        if folder_choice.lower() == "q":
+            return
+        try:
+            choice_idx = int(folder_choice)
+            if choice_idx == 0:
+                chosen_folder = ocr_root
+            elif 1 <= choice_idx <= len(folders):
+                chosen_folder = os.path.join(ocr_root, folders[choice_idx - 1])
+            else:
+                print(Fore.RED + "Invalid selection." + Style.RESET_ALL)
+                return
+        except ValueError:
+            print(Fore.RED + "Invalid input." + Style.RESET_ALL)
+            return
+    else:
+        print("\nAvailable OCR folders:")
+        for idx, folder in enumerate(folders, 1):
+            print(f"{idx}. {folder}")
+        folder_choice = input(Fore.YELLOW + "Select a folder number (or 'q' to return): " + Style.RESET_ALL).strip()
+        if folder_choice.lower() == "q":
+            return
+        try:
+            folder_idx = int(folder_choice) - 1
+            if 0 <= folder_idx < len(folders):
+                chosen_folder = os.path.join(ocr_root, folders[folder_idx])
+            else:
+                print(Fore.RED + "Invalid selection." + Style.RESET_ALL)
+                return
+        except ValueError:
+            print(Fore.RED + "Invalid input." + Style.RESET_ALL)
+            return
+    
+    # Get all images from chosen folder
+    image_files = glob.glob(os.path.join(chosen_folder, '*.png')) + \
+                  glob.glob(os.path.join(chosen_folder, '*.PNG')) + \
+                  glob.glob(os.path.join(chosen_folder, '*.jpg')) + \
+                  glob.glob(os.path.join(chosen_folder, '*.JPG')) + \
+                  glob.glob(os.path.join(chosen_folder, '*.jpeg')) + \
+                  glob.glob(os.path.join(chosen_folder, '*.JPEG')) + \
+                  glob.glob(os.path.join(chosen_folder, '*.bmp')) + \
+                  glob.glob(os.path.join(chosen_folder, '*.BMP')) + \
+                  glob.glob(os.path.join(chosen_folder, '*.heic')) + \
+                  glob.glob(os.path.join(chosen_folder, '*.HEIC'))
+    
+    if not image_files:
+        print(Fore.RED + "No image files found in selected folder." + Style.RESET_ALL)
+        return
+    
+    image_files.sort()  # Sort by filename
+    
+    # Ask for PDF filename
+    pdf_name = input(Fore.YELLOW + "Enter PDF filename (without .pdf extension): " + Style.RESET_ALL).strip()
+    if not pdf_name:
+        print("No filename entered. Returning to main menu.")
+        return
+    
+    pdf_path = os.path.join(chosen_folder, f"{pdf_name}.pdf")
+    
+    # Create PDF
+    try:
+        print(f"\n{Fore.CYAN}Creating PDF with {len(image_files)} images...{Style.RESET_ALL}")
+        
+        c = canvas.Canvas(pdf_path, pagesize=letter)
+        page_width, page_height = letter
+        
+        for idx, img_path in enumerate(image_files, 1):
+            print(f"{Fore.CYAN}Adding image {idx}/{len(image_files)}: {os.path.basename(img_path)}{Style.RESET_ALL}")
+            
+            try:
+                # Handle HEIC conversion
+                ext = os.path.splitext(img_path)[1].lower()
+                if ext in ['.heic']:
+                    try:
+                        import pillow_heif
+                        heif_file = pillow_heif.read_heif(img_path)
+                        img = PILImage.frombytes(heif_file.mode, heif_file.size, heif_file.data, "raw")
+                    except ImportError:
+                        print(Fore.YELLOW + f"  ⚠ Skipping HEIC file (pillow-heif not installed): {img_path}" + Style.RESET_ALL)
+                        continue
+                else:
+                    img = PILImage.open(img_path)
+                
+                # Convert to RGB if necessary
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    img = img.convert('RGB')
+                
+                # Calculate scaling to fit page
+                img_width, img_height = img.size
+                aspect = img_height / float(img_width)
+                
+                if img_width > page_width or img_height > page_height:
+                    if aspect > 1:
+                        # Portrait
+                        display_height = page_height - 40
+                        display_width = display_height / aspect
+                    else:
+                        # Landscape
+                        display_width = page_width - 40
+                        display_height = display_width * aspect
+                else:
+                    display_width = img_width
+                    display_height = img_height
+                
+                # Center image on page
+                x = (page_width - display_width) / 2
+                y = (page_height - display_height) / 2
+                
+                # Draw image
+                c.drawImage(ImageReader(img), x, y, width=display_width, height=display_height)
+                c.showPage()  # Start new page for next image
+                
+            except Exception as e:
+                print(Fore.RED + f"  ✗ Error adding {img_path}: {e}" + Style.RESET_ALL)
+                continue
+        
+        c.save()
+        print(Fore.GREEN + f"\n✓ PDF created successfully: {pdf_path}" + Style.RESET_ALL)
+        
+    except Exception as e:
+        print(Fore.RED + f"Error creating PDF: {e}" + Style.RESET_ALL)
+
 def ocr_main():
     """
-    Processes images in the OCR directory using AI vision model (qwen3-vl:8b via Ollama).
+    Processes images in the OCR directory using AI vision model (via Ollama or LM Studio).
     Supports both direct images in src/ocr/ or organized in subfolders under src/ocr/.
-    Falls back to Tesseract OCR if Ollama is not available.
+    Falls back to Tesseract OCR if AI vision is not available.
     """
-    # Check if Ollama with vision model is available
+    # Check for vision models in Ollama or LM Studio
     use_ai_ocr = False
-    vision_model = "qwen3-vl:8b"
+    vision_model = None
+    ai_base_url = None
     
+    print(Fore.CYAN + "\nChecking for AI vision models..." + Style.RESET_ALL)
+    
+    # Try Ollama first
     try:
         response = requests.get("http://localhost:11434/v1/models", timeout=3)
         if response.status_code == 200:
             models_data = response.json()
             available_models = [m.get('model') or m.get('name') for m in models_data.get('data', [])]
-            # Check for vision-capable models
+            print(Fore.CYAN + f"Ollama models found: {', '.join(available_models) if available_models else 'None'}" + Style.RESET_ALL)
             vision_models = [m for m in available_models if 'vl' in m.lower() or 'vision' in m.lower() or 'llava' in m.lower()]
             if vision_models:
                 use_ai_ocr = True
-                vision_model = vision_models[0]  # Use first available vision model
-                print(Fore.GREEN + f"✓ AI OCR enabled using model: {vision_model}" + Style.RESET_ALL)
-            else:
-                print(Fore.YELLOW + "⚠ No vision models found in Ollama. Using traditional Tesseract OCR." + Style.RESET_ALL)
-        else:
-            print(Fore.YELLOW + "⚠ Ollama not available. Using traditional Tesseract OCR." + Style.RESET_ALL)
-    except Exception:
-        print(Fore.YELLOW + "⚠ Could not connect to Ollama. Using traditional Tesseract OCR." + Style.RESET_ALL)
+                vision_model = vision_models[0]
+                ai_base_url = "http://localhost:11434"
+                print(Fore.GREEN + f"✓ AI OCR enabled using Ollama vision model: {vision_model}" + Style.RESET_ALL)
+    except Exception as e:
+        print(Fore.YELLOW + f"Ollama not accessible: {e}" + Style.RESET_ALL)
+    
+    # Try LM Studio if Ollama not found
+    if not use_ai_ocr:
+        try:
+            response = requests.get("http://localhost:1234/v1/models", timeout=3)
+            if response.status_code == 200:
+                models_data = response.json()
+                available_models = [m.get('id') or m.get('model') for m in models_data.get('data', [])]
+                print(Fore.CYAN + f"LM Studio models found: {', '.join(available_models) if available_models else 'None'}" + Style.RESET_ALL)
+                vision_models = [m for m in available_models if 'vl' in m.lower() or 'vision' in m.lower() or 'qwen' in m.lower()]
+                if vision_models:
+                    use_ai_ocr = True
+                    vision_model = vision_models[0]
+                    ai_base_url = "http://localhost:1234"
+                    print(Fore.GREEN + f"✓ AI OCR enabled using LM Studio vision model: {vision_model}" + Style.RESET_ALL)
+        except Exception as e:
+            print(Fore.YELLOW + f"LM Studio not accessible: {e}" + Style.RESET_ALL)
+    
+    if not use_ai_ocr:
+        print(Fore.RED + "\n⚠ NO AI VISION MODELS DETECTED!" + Style.RESET_ALL)
+        print(Fore.YELLOW + "Please ensure you have a vision model running:" + Style.RESET_ALL)
+        print(Fore.YELLOW + "  • Ollama (port 11434): Models with 'vl', 'vision', or 'llava' in name" + Style.RESET_ALL)
+        print(Fore.YELLOW + "  • LM Studio (port 1234): Models with 'vl', 'vision', or 'qwen' in name" + Style.RESET_ALL)
+        print(Fore.YELLOW + "\nExamples: qwen2.5-vl-3b, qwen3-vl:8b, llava, etc." + Style.RESET_ALL)
+        print(Fore.CYAN + "\nFalling back to traditional Tesseract OCR (lower quality)." + Style.RESET_ALL)
+        
+        proceed = input(Fore.YELLOW + "\nContinue with Tesseract OCR? (y/n): " + Style.RESET_ALL).strip().lower()
+        if proceed != "y":
+            print("Returning to main menu.")
+            return
     
     # Look for ocr directory in the same folder as main.py (src/ocr)
     ocr_root = os.path.join(os.path.dirname(__file__), 'ocr')
@@ -711,9 +917,13 @@ def ocr_main():
     
     # Check for images directly in ocr root
     direct_images = glob.glob(os.path.join(ocr_root, '*.png')) + \
+                    glob.glob(os.path.join(ocr_root, '*.PNG')) + \
                     glob.glob(os.path.join(ocr_root, '*.jpg')) + \
+                    glob.glob(os.path.join(ocr_root, '*.JPG')) + \
                     glob.glob(os.path.join(ocr_root, '*.jpeg')) + \
+                    glob.glob(os.path.join(ocr_root, '*.JPEG')) + \
                     glob.glob(os.path.join(ocr_root, '*.bmp')) + \
+                    glob.glob(os.path.join(ocr_root, '*.BMP')) + \
                     glob.glob(os.path.join(ocr_root, '*.heic')) + \
                     glob.glob(os.path.join(ocr_root, '*.HEIC')) + \
                     glob.glob(os.path.join(ocr_root, '*.heif')) + \
@@ -776,9 +986,13 @@ def ocr_main():
     # Now process the chosen folder
     try:
         image_files = glob.glob(os.path.join(chosen_folder, '*.png')) + \
+                     glob.glob(os.path.join(chosen_folder, '*.PNG')) + \
                      glob.glob(os.path.join(chosen_folder, '*.jpg')) + \
+                     glob.glob(os.path.join(chosen_folder, '*.JPG')) + \
                      glob.glob(os.path.join(chosen_folder, '*.jpeg')) + \
+                     glob.glob(os.path.join(chosen_folder, '*.JPEG')) + \
                      glob.glob(os.path.join(chosen_folder, '*.bmp')) + \
+                     glob.glob(os.path.join(chosen_folder, '*.BMP')) + \
                      glob.glob(os.path.join(chosen_folder, '*.heic')) + \
                      glob.glob(os.path.join(chosen_folder, '*.HEIC')) + \
                      glob.glob(os.path.join(chosen_folder, '*.heif')) + \
@@ -789,69 +1003,73 @@ def ocr_main():
         image_files.sort()  # Sort files by filename
         folder_name = os.path.basename(chosen_folder) if chosen_folder != ocr_root else "OCR root"
         print(f"\nProcessing {len(image_files)} images in '{folder_name}' (sorted by filename)...")
+        print(Fore.CYAN + f"Your system: 12 cores, 32GB RAM, RTX 3050 6GB" + Style.RESET_ALL)
+        print(Fore.CYAN + f"Estimated capacity: 50-100+ images per batch" + Style.RESET_ALL)
         ocr_txt_files = []
-        for img_path in image_files:
-                try:
-                    ext = os.path.splitext(img_path)[1].lower()
-                    original_path = img_path  # Save original path for deletion later
-                    
-                    if ext in ['.heic', '.heif']:
-                        try:
-                            import pillow_heif
-                            heif_file = pillow_heif.read_heif(img_path)
-                            img = Image.frombytes(
-                                heif_file.mode,
-                                heif_file.size,
-                                heif_file.data,
-                                "raw"
-                            )
-                            png_path = os.path.splitext(img_path)[0] + '_converted.png'
-                            img.save(png_path, format='PNG')
-                            print(Fore.YELLOW + f"Converted {img_path} to {png_path}" + Style.RESET_ALL)
-                            img_path = png_path
-                            # Re-open the PNG for preprocessing
-                            img = Image.open(img_path)
-                        except ImportError:
-                            print(Fore.RED + "pillow-heif is required for HEIC/HEIF support. Install with 'pip install pillow-heif'." + Style.RESET_ALL)
-                            continue
-                        except Exception as e:
-                            print(Fore.RED + f"Error converting {img_path}: {e}" + Style.RESET_ALL)
-                            continue
-                    else:
-                        # Load non-HEIC images
+        
+        for idx, img_path in enumerate(image_files, 1):
+            print(Fore.MAGENTA + f"\n[{idx}/{len(image_files)}] Processing: {os.path.basename(img_path)}" + Style.RESET_ALL)
+            try:
+                ext = os.path.splitext(img_path)[1].lower()
+                original_path = img_path  # Save original path for deletion later
+                
+                if ext in ['.heic', '.heif']:
+                    try:
+                        import pillow_heif
+                        heif_file = pillow_heif.read_heif(img_path)
+                        img = Image.frombytes(
+                            heif_file.mode,
+                            heif_file.size,
+                            heif_file.data,
+                            "raw"
+                        )
+                        png_path = os.path.splitext(img_path)[0] + '_converted.png'
+                        img.save(png_path, format='PNG')
+                        print(Fore.YELLOW + f"Converted {img_path} to {png_path}" + Style.RESET_ALL)
+                        img_path = png_path
+                        # Re-open the PNG for preprocessing
                         img = Image.open(img_path)
-                    
-                    # Convert to RGB first (in case of RGBA), then to grayscale
-                    if img.mode in ('RGBA', 'LA', 'P'):
-                        img = img.convert('RGB')
-                    img = img.convert('L')
-                    
-                    # Advanced preprocessing for better OCR
-                    from PIL import ImageEnhance, ImageFilter, ImageOps
-                    
-                    # Resize if image is too small (upscale for better OCR)
-                    width, height = img.size
-                    if width < 1800 or height < 1800:
-                        scale = max(1800 / width, 1800 / height)
-                        new_size = (int(width * scale), int(height * scale))
-                        img = img.resize(new_size, Image.Resampling.LANCZOS)
-                    
-                    # Enhance contrast
-                    enhancer = ImageEnhance.Contrast(img)
-                    img = enhancer.enhance(2.5)
-                    
-                    # Enhance sharpness
-                    enhancer = ImageEnhance.Sharpness(img)
-                    img = enhancer.enhance(2.0)
-                    
-                    # Apply adaptive thresholding for better text extraction
-                    # This binarizes the image (black text on white background)
-                    img = ImageOps.autocontrast(img, cutoff=2)
-                    
-                    # Perform OCR based on available method
-                    print(Fore.CYAN + f"Running OCR on {os.path.basename(img_path)}..." + Style.RESET_ALL)
-                    
-                    if use_ai_ocr:
+                    except ImportError:
+                        print(Fore.RED + "pillow-heif is required for HEIC/HEIF support. Install with 'pip install pillow-heif'." + Style.RESET_ALL)
+                        continue
+                    except Exception as e:
+                        print(Fore.RED + f"Error converting {img_path}: {e}" + Style.RESET_ALL)
+                        continue
+                else:
+                    # Load non-HEIC images
+                    img = Image.open(img_path)
+                
+                # Convert to RGB first (in case of RGBA), then to grayscale
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    img = img.convert('RGB')
+                img = img.convert('L')
+                
+                # Advanced preprocessing for better OCR
+                from PIL import ImageEnhance, ImageFilter, ImageOps
+                
+                # Resize if image is too small (upscale for better OCR)
+                width, height = img.size
+                if width < 1800 or height < 1800:
+                    scale = max(1800 / width, 1800 / height)
+                    new_size = (int(width * scale), int(height * scale))
+                    img = img.resize(new_size, Image.Resampling.LANCZOS)
+                
+                # Enhance contrast
+                enhancer = ImageEnhance.Contrast(img)
+                img = enhancer.enhance(2.5)
+                
+                # Enhance sharpness
+                enhancer = ImageEnhance.Sharpness(img)
+                img = enhancer.enhance(2.0)
+                
+                # Apply adaptive thresholding for better text extraction
+                # This binarizes the image (black text on white background)
+                img = ImageOps.autocontrast(img, cutoff=2)
+                
+                # Perform OCR based on available method
+                print(Fore.CYAN + f"Running OCR on {os.path.basename(img_path)}..." + Style.RESET_ALL)
+                
+                if use_ai_ocr:
                         # Use AI vision model for OCR
                         try:
                             import base64
@@ -864,64 +1082,118 @@ def ocr_main():
                             img_rgb.save(buffer, format='JPEG', quality=95)
                             img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
                             
-                            # Call Ollama vision model
-                            ollama_response = requests.post(
-                                "http://localhost:11434/api/generate",
-                                json={
-                                    "model": vision_model,
-                                    "prompt": "Extract all text from this image. Provide only the text content, maintaining the original formatting and structure. Do not add any commentary or descriptions.",
-                                    "images": [img_base64],
-                                    "stream": False
-                                },
-                                timeout=120
-                            )
+                            # Determine which API to use based on where we found the model
+                            vision_response = None
                             
-                            if ollama_response.status_code == 200:
-                                result = ollama_response.json()
-                                best_text = result.get('response', '')
-                                print(Fore.GREEN + f"✓ AI OCR completed" + Style.RESET_ALL)
-                            else:
+                            # Try Ollama format first (port 11434)
+                            try:
+                                ollama_response = requests.post(
+                                    "http://localhost:11434/api/generate",
+                                    json={
+                                        "model": vision_model,
+                                        "prompt": "Extract all text from this image. Provide only the text content, maintaining the original formatting and structure. Do not add any commentary or descriptions.",
+                                        "images": [img_base64],
+                                        "stream": False
+                                    },
+                                    timeout=120
+                                )
+                                
+                                if ollama_response.status_code == 200:
+                                    result = ollama_response.json()
+                                    best_text = result.get('response', '')
+                                    print(Fore.GREEN + f"✓ AI OCR completed (Ollama)" + Style.RESET_ALL)
+                                    vision_response = True
+                            except:
+                                pass
+                            
+                            # If Ollama failed, try LM Studio format (port 1234)
+                            if not vision_response:
+                                try:
+                                    lmstudio_response = requests.post(
+                                        "http://localhost:1234/v1/chat/completions",
+                                        json={
+                                            "model": vision_model,
+                                            "messages": [
+                                                {
+                                                    "role": "user",
+                                                    "content": [
+                                                        {
+                                                            "type": "text",
+                                                            "text": "Extract all text from this image. Provide only the text content, maintaining the original formatting and structure. Do not add any commentary or descriptions."
+                                                        },
+                                                        {
+                                                            "type": "image_url",
+                                                            "image_url": {
+                                                                "url": f"data:image/jpeg;base64,{img_base64}"
+                                                            }
+                                                        }
+                                                    ]
+                                                }
+                                            ],
+                                            "max_tokens": 2000,
+                                            "temperature": 0.1
+                                        },
+                                        timeout=120
+                                    )
+                                    
+                                    if lmstudio_response.status_code == 200:
+                                        result = lmstudio_response.json()
+                                        best_text = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+                                        print(Fore.GREEN + f"✓ AI OCR completed (LM Studio)" + Style.RESET_ALL)
+                                        vision_response = True
+                                except Exception as e:
+                                    pass
+                            
+                            if not vision_response:
                                 print(Fore.YELLOW + f"⚠ AI OCR failed, falling back to Tesseract" + Style.RESET_ALL)
                                 best_text = pytesseract.image_to_string(img, config='--psm 3 --oem 1')
                         except Exception as e:
                             print(Fore.YELLOW + f"⚠ AI OCR error: {e}, using Tesseract" + Style.RESET_ALL)
                             best_text = pytesseract.image_to_string(img, config='--psm 3 --oem 1')
-                    else:
-                        # Use traditional Tesseract OCR with PSM 3
-                        best_text = pytesseract.image_to_string(img, config='--psm 3 --oem 1')
-                    
-                    txt_path = os.path.splitext(img_path)[0] + '.txt'
-                    with open(txt_path, 'w', encoding='utf-8') as f:
-                        f.write(best_text)
-                    ocr_txt_files.append(txt_path)
-                    print(Fore.GREEN + f"Saved OCR text to: {txt_path}" + Style.RESET_ALL)
-                    
-                    # Delete original HEIC file if it was converted
-                    if original_path != img_path and os.path.exists(original_path):
+                else:
+                    # Use traditional Tesseract OCR with PSM 3
+                    best_text = pytesseract.image_to_string(img, config='--psm 3 --oem 1')
+                
+                txt_path = os.path.splitext(img_path)[0] + '.txt'
+                with open(txt_path, 'w', encoding='utf-8') as f:
+                    f.write(best_text)
+                ocr_txt_files.append(txt_path)
+                print(Fore.GREEN + f"Saved OCR text to: {txt_path}" + Style.RESET_ALL)
+                
+                # Clear memory after processing each image
+                del img
+                if 'img_rgb' in locals():
+                    del img_rgb
+                if 'buffer' in locals():
+                    del buffer
+                if 'img_base64' in locals():
+                    del img_base64
+                import gc
+                gc.collect()
+                
+                # Delete original HEIC file if it was converted (keep the PNG)
+                if original_path != img_path and os.path.exists(original_path):
+                    if ext in ['.heic', '.heif']:
                         try:
                             os.remove(original_path)
                             print(Fore.YELLOW + f"Deleted original HEIC file: {original_path}" + Style.RESET_ALL)
                         except Exception as e:
                             print(Fore.RED + f"Error deleting {original_path}: {e}" + Style.RESET_ALL)
-                    
-                    # Delete the processed image (PNG or original non-HEIC)
-                    try:
-                        os.remove(img_path)
-                        print(Fore.YELLOW + f"Deleted processed image: {img_path}" + Style.RESET_ALL)
-                    except Exception as e:
-                        print(Fore.RED + f"Error deleting image {img_path}: {e}" + Style.RESET_ALL)
-                except Exception as e:
-                    print(Fore.RED + f"Error processing {img_path}: {e}" + Style.RESET_ALL)
+            except Exception as e:
+                print(Fore.RED + f"Error processing {img_path}: {e}" + Style.RESET_ALL)
         # Combine all OCR .txt files into one file
         combined_text = ""
         if ocr_txt_files:
-            combined_path = os.path.join(chosen_folder, 'combined_ocr.txt')
+            # Use folder name for the combined file
+            folder_name = os.path.basename(chosen_folder) if chosen_folder != ocr_root else "ocr_root"
+            combined_filename = f"{folder_name}_combined.txt"
+            combined_path = os.path.join(chosen_folder, combined_filename)
             with open(combined_path, 'w', encoding='utf-8') as fout:
                 for txt_file in ocr_txt_files:
                     with open(txt_file, 'r', encoding='utf-8') as fin:
-                        section = f"--- {os.path.basename(txt_file)} ---\n" + fin.read() + "\n\n"
-                        fout.write(section)
-                        combined_text += section
+                        content = fin.read()
+                        fout.write(content + "\n")
+                        combined_text += content + "\n"
             print(Fore.GREEN + f"Combined OCR text saved to: {combined_path}" + Style.RESET_ALL)
     except Exception as e:
         print(Fore.RED + f"An error occurred: {e}" + Style.RESET_ALL)

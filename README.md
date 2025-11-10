@@ -57,7 +57,6 @@ This project requires FFmpeg to extract audio from YouTube videos.
 
 ### ✅ Setup
 
-1️⃣ Download FFmpeg for your OS from:  
 https://ffmpeg.org/download.html
 
 2️⃣ Unzip the package.
@@ -111,6 +110,7 @@ ollama pull llama3
         print(torch.cuda.get_device_name(0))
         ```
     5. If you see `True` and your GPU name, CUDA is working!
+1️⃣ Download FFmpeg for your OS from:  
 
 - If you do **not** have an NVIDIA GPU, the app will automatically use CPU.
 
