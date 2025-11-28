@@ -1,18 +1,35 @@
-# YouTube Transcript and Summarizer Project ver 1.3.0
+# Stephen's Tools v3.0
 
-This project allows you to download YouTube audio, transcribe it using Whisper, and have interactive chat sessions with AI models (OpenAI, LM Studio, or Ollama).  
+A comprehensive toolkit for audio transcription, OCR, PDF generation, and AI-powered chat. This project allows you to download audio from YouTube and SoundCloud, transcribe it using Whisper, perform OCR on images, combine images into PDFs, and have interactive chat sessions with AI models (OpenAI, LM Studio, or Ollama).
 
-✅ The project is designed to use a local `ffmpeg` binary placed in your project folder — no global install or system PATH needed.
+✅ Auto-detects `ffmpeg` from system PATH or common installation locations (Homebrew, apt, Windows local).
 
 ---
 
 ## 🚀 Features
 
+### Audio & Transcription
 - Download and convert YouTube videos to audio (mp3)
-- Transcribe audio files automatically using Whisper
-- Choose and load transcript or summary files as context for chat
-- Flexible support for OpenAI cloud or local LLMs (Ollama, LM Studio)
-- Uses local `ffmpeg` binary in your project folder
+- Download audio from SoundCloud
+- Transcribe audio files automatically using Whisper (GPU/CUDA support)
+- Transcribe local audio files from your computer
+- Combine multiple transcript files
+
+### OCR & PDF Tools
+- Perform OCR on images using Tesseract
+- Extract text from HEIF/HEIC images
+- Combine multiple images into a single PDF
+
+### AI Chat & Summarization
+- Interactive chat sessions with AI models
+- Load transcript or summary files as context for chat
+- Summarize long transcripts automatically (splits into chunks if needed)
+- Flexible support for OpenAI Cloud, Ollama, or LM Studio
+
+### System Integration
+- Auto-detects `ffmpeg` from system PATH or common locations
+- GPU acceleration support (NVIDIA CUDA) for faster transcription
+- Cross-platform compatibility (Windows, macOS, Linux)
 
 ---
 
@@ -20,8 +37,8 @@ This project allows you to download YouTube audio, transcribe it using Whisper, 
 
 ```bash
 # Clone the repository
-git clone <your-repo-url>
-cd your-repo
+git clone https://github.com/sxbsalesman/stephen_tools.git
+cd stephen_tools
 
 # (Optional but recommended) Create and activate virtual environment
 python -m venv .venv
@@ -35,42 +52,57 @@ source .venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Create .env file in the root folder and add:
+# (Optional) Create .env file in the root folder and add:
 # OPENAI_API_KEY=your_openai_api_key_here
 
-# Start the script
-python main2.py
+# Start the application
+python src/main.py
 ```
 
 Follow the interactive menu:
 
-1️⃣ Download a YouTube audio file  
-2️⃣ Transcribe an audio file  
-3️⃣ Start a chat session  
-4️⃣ Exit
+1️⃣ Download YouTube audio  
+2️⃣ Download SoundCloud audio  
+3️⃣ Transcribe audio file  
+4️⃣ Transcribe local audio file  
+5️⃣ Combine transcript files  
+6️⃣ Chat session (with optional transcript context)  
+7️⃣ Summarize transcript  
+8️⃣ Delete files  
+9️⃣ OCR image to text  
+🔟 Combine images to PDF  
+0️⃣ Exit
 
 ---
 
 ## 🎧 FFmpeg Setup
 
-This project requires FFmpeg to extract audio from YouTube videos.
+This project requires FFmpeg to extract audio from YouTube and SoundCloud.
 
-### ✅ Setup
+### ✅ Auto-Detection
 
-https://ffmpeg.org/download.html
+The application automatically detects `ffmpeg` from:
+- System PATH
+- `/opt/homebrew/bin/ffmpeg` (macOS Homebrew)
+- `/usr/local/bin/ffmpeg` (macOS/Linux)
+- `/usr/bin/ffmpeg` (Linux)
+- `./ffmpeg/bin/ffmpeg.exe` (Windows local)
 
-2️⃣ Unzip the package.
+### Installation
 
-3️⃣ Move `ffmpeg.exe` (Windows) or the `ffmpeg` binary (macOS/Linux) into:
-
+**macOS:**
+```bash
+brew install ffmpeg
 ```
-your-repo/
-├── ffmpeg/
-│   └── bin/
-│       └── ffmpeg.exe (or ffmpeg binary)
+
+**Ubuntu/Linux:**
+```bash
+sudo apt install ffmpeg
 ```
 
-⚠️ **Important:** The script expects `ffmpeg` at `./ffmpeg/bin/ffmpeg.exe` by default.
+**Windows:**
+1. Download from https://ffmpeg.org/download.html
+2. Extract and place `ffmpeg.exe` in `./ffmpeg/bin/` folder, or add to system PATH
 
 ---
 
@@ -127,32 +159,62 @@ ollama pull llama3
 
 ---
 
-## 📂 Recommended Project Structure
+## 📦 Required Packages
+
+The project uses the following Python packages (see `requirements.txt`):
+
+- **pillow-heif** - HEIF/HEIC image support
+- **yt-dlp** - YouTube and SoundCloud audio downloading
+- **openai** - OpenAI API client
+- **openai-whisper** - Audio transcription
+- **colorama** - Terminal color output
+- **python-dotenv** - Environment variable management
+- **requests** - HTTP requests
+- **pytesseract** - OCR engine wrapper
+- **Pillow** - Image processing
+- **reportlab** - PDF generation
+
+### Additional System Requirements
+
+- **Tesseract OCR**: Required for OCR functionality
+  - macOS: `brew install tesseract`
+  - Ubuntu/Linux: `sudo apt install tesseract-ocr`
+  - Windows: Download from https://github.com/tesseract-ocr/tesseract
+
+## 📂 Project Structure
 
 ```
-your-repo/
-├── ffmpeg/
-│   └── bin/
-│       └── ffmpeg.exe
-├── audio/
-├── transcripts/
-├── summaries/
-├── soundcloud/
-├── combined_transcription/
-├── main2.py
+stephen_tools/
+├── src/
+│   └── main.py          # Main application
+├── audio/               # YouTube downloads (auto-created)
+├── soundcloud/          # SoundCloud downloads (auto-created)
+├── transcripts/         # Transcription files (auto-created)
+├── summaries/           # Summary files (auto-created)
+├── combined_transcription/  # Combined transcripts (auto-created)
 ├── requirements.txt
 ├── .gitignore
-├── .env
-├── README.md
+├── .env                 # Optional: API keys
+└── README.md
 ```
 
 ---
 
-## ✅ Notes
+## 💡 Usage Tips
 
-- Do **not** commit your `.venv` folder — include it in `.gitignore`.
-- By default, transcripts are saved to `transcripts/` and audio files to `audio/`.
-- The script will raise an error if `ffmpeg.exe` is missing in the expected folder.
+- **Virtual Environment**: Do **not** commit your `.venv` folder — it's included in `.gitignore`.
+- **File Organization**: 
+  - YouTube audio → `audio/`
+  - SoundCloud audio → `soundcloud/`
+  - Transcripts → `transcripts/`
+  - Summaries → `summaries/`
+  - Combined transcripts → `combined_transcription/`
+- **FFmpeg**: The application will warn you if `ffmpeg` is not found and provide installation instructions.
+- **GPU Acceleration**: For faster Whisper transcription, ensure CUDA-enabled PyTorch is installed (see GPU Support section).
+- **API Keys**: For OpenAI Cloud, you can either:
+  - Set `OPENAI_API_KEY` in a `.env` file
+  - Enter it when prompted in the application
+- **Local LLMs**: For offline AI chat, use Ollama or LM Studio (no API key required).
 
 ---
 
@@ -171,7 +233,7 @@ This tool allows downloading audio from YouTube and SoundCloud for personal, edu
 This project is licensed under the MIT License.  
 See the LICENSE file for details.
 
-Copyright (c) 2025 Stephen [Your Last Name or GitHub Username]
+Copyright (c) 2025 sxbsalesman
 
 This project uses open source libraries such as yt-dlp, openai-whisper, torch, and others.  
 Please refer to their respective licenses for more information.
