@@ -6,6 +6,13 @@ import requests # type: ignore
 import shutil
 import platform
 
+import yt_dlp # type: ignore
+import whisper # type: ignore
+import torch # type: ignore
+import openai # type: ignore
+import subprocess
+from colorama import Fore, Style, init # type: ignore
+
 # Auto-detect ffmpeg location based on OS
 def get_ffmpeg_path():
     """
@@ -42,13 +49,6 @@ else:
     print("   Ubuntu/Linux: sudo apt install ffmpeg")
     print("   macOS: brew install ffmpeg")
     print("   Windows: Download from https://ffmpeg.org/download.html")
-
-import yt_dlp # type: ignore
-import whisper # type: ignore
-import torch # type: ignore
-import openai # type: ignore
-import subprocess
-from colorama import Fore, Style, init # type: ignore
 
 init(autoreset=True)
 
@@ -475,9 +475,16 @@ def main():
     Main entry point for the application.
     Handles backend/model selection, displays the main menu, and routes user choices.
     """
-    print("\n" + "="*60)
-    print("         YouTube Downloader and Transcription Tools")
-    print("="*60 + "\n")
+    print("\n")
+    print(" ███████╗████████╗███████╗██████╗ ██╗  ██╗███████╗███╗   ██╗")
+    print(" ██╔════╝╚══██╔══╝██╔════╝██╔══██╗██║  ██║██╔════╝████╗  ██║")
+    print(" ███████╗   ██║   █████╗  ██████╔╝███████║█████╗  ██╔██╗ ██║")
+    print(" ╚════██║   ██║   ██╔══╝  ██╔═══╝ ██╔══██║██╔══╝  ██║╚██╗██║")
+    print(" ███████║   ██║   ███████╗██║     ██║  ██║███████╗██║ ╚████║")
+    print(" ╚══════╝   ╚═╝   ╚══════╝╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝")
+    print()
+    print("          🛠️  Stephen's AI-Powered Toolkit 🛠️")
+    print()
 
     global client
     base_url, api_key, backend, default_model = select_backend_and_model()
