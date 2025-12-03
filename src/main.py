@@ -421,8 +421,12 @@ def check_server_running(base_url, backend):
     Returns True if running, False otherwise.
     """
     try:
-        response = requests.get(f"{base_url}/models", timeout=5)
+        # LM Studio uses /v1/models, Ollama uses /v1/models as well
+        endpoint = f"{base_url}/v1/models"
+        response = requests.get(endpoint, timeout=5)
         if response.status_code == 200:
+            # If we get a 200 response, the server is running
+            # Don't check for loaded models - just verify server is accessible
             return True
         else:
             print(Fore.RED + f"{backend} server responded with status code {response.status_code}." + Style.RESET_ALL)
@@ -1201,7 +1205,126 @@ def ocr_main():
                         content = fin.read()
                         fout.write(content + "\n")
                         combined_text += content + "\n"
-            print(Fore.GREEN + f"Combined OCR text saved to: {combined_path}" + Style.RESET_ALL)
+            print(Fore.GREEN + f"\nCombined OCR text saved to: {combined_path}" + Style.RESET_ALL)
+            
+            # AI verification and cleanup
+            print(Fore.CYAN + "\n" + "="*60 + Style.RESET_ALL)
+            print(Fore.CYAN + "AI VERIFICATION & CLEANUP" + Style.RESET_ALL)
+            print(Fore.CYAN + "="*60 + Style.RESET_ALL)
+            
+            # Get AI summary for verification
+            verify = input(Fore.YELLOW + f"\nWould you like AI to verify the combined text captured all {len(image_files)} images correctly? (y/n): " + Style.RESET_ALL).strip().lower()
+            
+            if verify == 'y':
+                print(Fore.CYAN + "\nGenerating AI verification summary..." + Style.RESET_ALL)
+                
+                # Select backend for verification
+                base_url, api_key, backend, model_name = select_backend_and_model()
+                
+                # Check if server is running
+                if base_url:
+                    if not check_server_running(base_url, backend):
+                        print(Fore.RED + f"{backend} server is not running. Skipping verification." + Style.RESET_ALL)
+                        verify = 'n'
+                
+                if verify == 'y':
+                    try:
+                        # Create verification prompt
+                        verification_prompt = f"""I have processed {len(image_files)} images through OCR. Please review this combined text and provide:
+
+1. A brief summary of what content was captured
+2. Whether the text appears complete and coherent
+3. Any obvious gaps or missing sections
+4. Overall quality assessment (Good/Fair/Poor)
+
+Combined text:
+{combined_text[:8000]}{"... [truncated]" if len(combined_text) > 8000 else ""}"""
+
+                        # Initialize OpenAI client
+                        if base_url:
+                            client = openai.OpenAI(base_url=f"{base_url}/v1", api_key=api_key)
+                        else:
+                            client = openai.OpenAI(api_key=api_key)
+                        
+                        # Get AI verification
+                        print(Fore.CYAN + f"Using {backend} with model: {model_name}" + Style.RESET_ALL)
+                        completion = client.chat.completions.create(
+                            model=model_name,
+                            messages=[
+                                {"role": "system", "content": "You are a helpful assistant that verifies OCR results for completeness and quality."},
+                                {"role": "user", "content": verification_prompt}
+                            ],
+                            temperature=0.3,
+                            max_tokens=1000
+                        )
+                        
+                        # Safely extract the response
+                        if completion and hasattr(completion, 'choices') and completion.choices is not None and len(completion.choices) > 0:
+                            verification_result = completion.choices[0].message.content
+                            print(Fore.GREEN + "\n" + "="*60 + Style.RESET_ALL)
+                            print(Fore.GREEN + "AI VERIFICATION RESULT:" + Style.RESET_ALL)
+                            print(Fore.GREEN + "="*60 + Style.RESET_ALL)
+                            print(verification_result)
+                            print(Fore.GREEN + "="*60 + Style.RESET_ALL)
+                        else:
+                            print(Fore.RED + "\nNo response received from AI model." + Style.RESET_ALL)
+                            print(Fore.YELLOW + "This might be due to:" + Style.RESET_ALL)
+                            print(Fore.YELLOW + "  • LM Studio server not running properly" + Style.RESET_ALL)
+                            print(Fore.YELLOW + "  • No model loaded in LM Studio" + Style.RESET_ALL)
+                            print(Fore.YELLOW + "  • Model doesn't support the request format" + Style.RESET_ALL)
+                        
+                    except Exception as e:
+                        import traceback
+                        print(Fore.RED + f"\nError during AI verification: {e}" + Style.RESET_ALL)
+                        print(Fore.YELLOW + "Debug info:" + Style.RESET_ALL)
+                        print(Fore.YELLOW + traceback.format_exc() + Style.RESET_ALL)
+            
+            # Cleanup individual files
+            print(Fore.YELLOW + f"\n{'='*60}" + Style.RESET_ALL)
+            cleanup = input(Fore.YELLOW + f"Delete all individual image and text files, keeping only the combined file? (y/n): " + Style.RESET_ALL).strip().lower()
+            
+            if cleanup == 'y':
+                deleted_images = 0
+                deleted_texts = 0
+                
+                # Delete individual text files
+                for txt_file in ocr_txt_files:
+                    try:
+                        os.remove(txt_file)
+                        deleted_texts += 1
+                    except Exception as e:
+                        print(Fore.RED + f"Error deleting {txt_file}: {e}" + Style.RESET_ALL)
+                
+                # Re-scan for all image files in the folder (including any converted files)
+                all_images = glob.glob(os.path.join(chosen_folder, '*.png')) + \
+                             glob.glob(os.path.join(chosen_folder, '*.PNG')) + \
+                             glob.glob(os.path.join(chosen_folder, '*.jpg')) + \
+                             glob.glob(os.path.join(chosen_folder, '*.JPG')) + \
+                             glob.glob(os.path.join(chosen_folder, '*.jpeg')) + \
+                             glob.glob(os.path.join(chosen_folder, '*.JPEG')) + \
+                             glob.glob(os.path.join(chosen_folder, '*.bmp')) + \
+                             glob.glob(os.path.join(chosen_folder, '*.BMP')) + \
+                             glob.glob(os.path.join(chosen_folder, '*.heic')) + \
+                             glob.glob(os.path.join(chosen_folder, '*.HEIC')) + \
+                             glob.glob(os.path.join(chosen_folder, '*.heif')) + \
+                             glob.glob(os.path.join(chosen_folder, '*.HEIF'))
+                
+                # Delete all image files
+                for img_path in all_images:
+                    try:
+                        if os.path.exists(img_path):
+                            os.remove(img_path)
+                            deleted_images += 1
+                    except Exception as e:
+                        print(Fore.RED + f"Error deleting {img_path}: {e}" + Style.RESET_ALL)
+                
+                print(Fore.GREEN + f"\n✓ Cleanup complete!" + Style.RESET_ALL)
+                print(Fore.GREEN + f"  • Deleted {deleted_images} image file(s)" + Style.RESET_ALL)
+                print(Fore.GREEN + f"  • Deleted {deleted_texts} text file(s)" + Style.RESET_ALL)
+                print(Fore.GREEN + f"  • Kept combined file: {combined_path}" + Style.RESET_ALL)
+            else:
+                print(Fore.YELLOW + "Files kept. You can manually delete them later." + Style.RESET_ALL)
+                
     except Exception as e:
         print(Fore.RED + f"An error occurred: {e}" + Style.RESET_ALL)
 
