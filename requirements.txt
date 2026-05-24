@@ -1,5 +1,5 @@
 pillow-heif
-yt-dlp
+yt-dlp>=2025.03.31
 openai
 openai-whisper
 colorama
