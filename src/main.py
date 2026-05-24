@@ -2,9 +2,11 @@ import pytesseract # type: ignore
 from PIL import Image # type: ignore
 import glob
 import os
+import re
 import requests # type: ignore
 import shutil
 import platform
+import time
 
 import yt_dlp # type: ignore
 import whisper # type: ignore
@@ -116,22 +118,86 @@ def download_audio(youtube_url, output_path="audio"):
     """
     if not os.path.exists(output_path):
         os.makedirs(output_path)
-    ydl_opts = {
-        'format': 'bestaudio/best',
+
+    base_opts = {
+        'format': 'bestaudio[ext=m4a]/bestaudio/best',
         'outtmpl': os.path.join(output_path, '%(title)s.%(ext)s'),
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
+        'noplaylist': True,
+        'retries': 10,
+        'fragment_retries': 10,
+        'extractor_retries': 3,
+        'geo_bypass': True,
+        'socket_timeout': 30,
         'quiet': False,
         'ffmpeg_location': ffmpeg_path,
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(youtube_url, download=True)
-        filename = ydl.prepare_filename(info)
-        audio_file = os.path.splitext(filename)[0] + '.mp3'
-        return audio_file
+
+    # Some YouTube clients now force SABR/PO-token flows and can cause 403 responses.
+    # Prefer non-Android clients first to reduce PO-token warnings, then fall back.
+    attempts = [
+        {
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['tv', 'web']
+                }
+            }
+        },
+        {
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['mweb', 'ios']
+                }
+            },
+            'cookiesfrombrowser': ('chrome',)
+        },
+        {
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['safari', 'web']
+                }
+            }
+        },
+        {
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'tv']
+                }
+            }
+        },
+    ]
+
+    last_error = None
+    for idx, extra_opts in enumerate(attempts, 1):
+        ydl_opts = dict(base_opts)
+        ydl_opts.update(extra_opts)
+        # The "page needs to be reloaded" error can be transient; retry each strategy briefly.
+        strategy_attempts = 2
+        for attempt_no in range(1, strategy_attempts + 1):
+            try:
+                print(Fore.CYAN + f"Trying YouTube download strategy {idx}/{len(attempts)} (attempt {attempt_no}/{strategy_attempts})..." + Style.RESET_ALL)
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(youtube_url, download=True)
+                    filename = ydl.prepare_filename(info)
+                    audio_file = os.path.splitext(filename)[0] + '.mp3'
+                    return audio_file
+            except Exception as exc:
+                last_error = exc
+                error_text = str(exc).lower()
+                should_retry_same_strategy = "page needs to be reloaded" in error_text and attempt_no < strategy_attempts
+                if should_retry_same_strategy:
+                    print(Fore.YELLOW + f"Transient YouTube error on strategy {idx}; retrying strategy..." + Style.RESET_ALL)
+                    continue
+                print(Fore.YELLOW + f"Download strategy {idx} failed: {exc}" + Style.RESET_ALL)
+                break
+
+    raise RuntimeError(
+        "All YouTube download strategies failed. If this persists, upgrade yt-dlp and run Python 3.10+ for best compatibility."
+    ) from last_error
 
 def download_soundcloud_audio(soundcloud_url, output_path="soundcloud"):
     """
@@ -259,48 +325,419 @@ def chat_session(model_name, backend):
         print(Fore.GREEN + "Bot: " + bot_message + Style.RESET_ALL)
         messages.append({"role": "assistant", "content": bot_message})
 
-def summarize_text(text, model_name):
-    """
-    Prompts the user for a summary format, sends the text and instruction to the LLM,
-    and returns the summary. Allows user to quit and return to main menu.
-    """
-    print("\nChoose a summary format (or enter 'q' to return to main menu):")
-    print("1. Bullet points")
-    print("2. Numbered list")
-    print("3. Single paragraph")
-    print("4. JSON object")
-    format_choice = input("Enter your choice (1/2/3/4 or q): ").strip()
-    if format_choice.lower() == "q" or format_choice == "":
-        print("Returning to main menu.")
-        return None
+def _is_codeish_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if stripped.startswith("$"):
+        return True
+    if "--" in stripped:
+        return True
+    if "dash dash" in stripped.lower() or "double dash" in stripped.lower() or "minus minus" in stripped.lower():
+        return True
+    if stripped.startswith("http://") or stripped.startswith("https://"):
+        return True
+    return bool(
+        re.match(
+            r"^(?:sudo\s+)?(?:python3?|pip3?|yt-dlp|brew|conda|ffmpeg|git|curl|wget|npm|node|docker|kubectl|ollama|source|make)\b",
+            stripped,
+            flags=re.IGNORECASE,
+        )
+    )
 
-    if format_choice == "1":
-        instruction = "Summarize the following text as concise bullet points:"
-    elif format_choice == "2":
-        instruction = "Summarize the following text as a numbered list:"
-    elif format_choice == "3":
-        instruction = "Summarize the following text in a single paragraph:"
-    elif format_choice == "4":
-        instruction = "Summarize the following text and return the result as a JSON object with keys 'main_points' and 'action_items':"
-    else:
-        print("Invalid choice. Returning to main menu.")
-        return None
 
-    chunks = split_text(text, max_words=3000)
-    summaries = []
+def _normalize_technical_terms(text: str) -> str:
+    """Apply conservative, high-confidence fixes for common Whisper technical errors.
+
+    This runs before placeholder protection so corrected technical tokens can be preserved.
+    """
+    normalized = text
+
+    # Common tool/name spacing issues
+    normalized = re.sub(r"\by\s*t\s*-?\s*dlp\b", "yt-dlp", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bff\s*mpeg\b", "ffmpeg", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bol\s*lama\b", "ollama", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bl\s*m\s*studio\b", "LM Studio", normalized, flags=re.IGNORECASE)
+
+    # Common OpenAI model name spacing (high confidence)
+    normalized = re.sub(r"\bgpt\s*[- ]?4\s*o\b", "gpt-4o", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bgpt\s*[- ]?4\s*o\s*mini\b", "gpt-4o-mini", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bgpt\s*[- ]?4\s*turbo\b", "gpt-4-turbo", normalized, flags=re.IGNORECASE)
+
+    # Turn spoken dash phrases into actual flag prefixes (only when clearly flag-like)
+    normalized = re.sub(r"\b(?:dash dash|double dash|minus minus)\s+([A-Za-z][\w-]*)\b", r"--\1", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdash\s+([A-Za-z])\b", r"-\1", normalized, flags=re.IGNORECASE)
+
+    return normalized
+
+
+def _lift_inline_commands_to_fences(text: str) -> str:
+    """Moves inline command snippets into their own fenced blocks.
+
+    This improves retrieval quality and helps ensure commands/flags are preserved exactly.
+    """
+    lines = text.splitlines()
+    out = []
+    in_fence = False
+
+    # Require at least one flag/path/url indicator so we don't fence ordinary sentences.
+    cmd_start = re.compile(
+        r"(?<!\w)(?:sudo\s+)?(?:python3?|pip3?|yt-dlp|ffmpeg|brew|conda|ollama|git|curl|wget|npm|node|docker|kubectl|make)\b",
+        flags=re.IGNORECASE,
+    )
+    indicator = re.compile(r"(--[\w-]+|\s-[A-Za-z]\b|https?://|\b[\w./~:-]+\.(?:py|txt|md|json|yaml|yml|mp3|m4a|wav|mp4|pdf)\b)")
+
+    def is_commandish_token(tok: str) -> bool:
+        t = tok.strip().strip("\"'`.,;:)")
+        if not t:
+            return False
+        if t.startswith("-"):
+            return True
+        if "--" in t:
+            return True
+        if "/" in t or "\\" in t:
+            return True
+        if ":" in t:
+            return True
+        if re.search(r"\.[A-Za-z0-9]{1,5}$", t):
+            return True
+        if t.lower() in {"yt-dlp", "ffmpeg", "pip", "pip3", "python", "python3", "brew", "conda", "ollama", "git", "curl", "wget", "npm", "node", "docker", "kubectl", "make"}:
+            return True
+        if re.fullmatch(r"gpt-[0-9][A-Za-z0-9._-]*", t, flags=re.IGNORECASE):
+            return True
+        if re.fullmatch(r"llama\d+(?::[0-9a-zA-Z._-]+)?", t, flags=re.IGNORECASE):
+            return True
+        return False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            out.append(line.rstrip())
+            continue
+        if in_fence or not stripped:
+            out.append(line.rstrip())
+            continue
+
+        if _is_codeish_line(line):
+            out.append(line.rstrip())
+            continue
+
+        # Look for a command start inside the line.
+        m = cmd_start.search(line)
+        if not m or not indicator.search(line[m.start():]):
+            out.append(line.rstrip())
+            continue
+
+        # Take the remainder of the line as a candidate command snippet, then trim trailing punctuation.
+        candidate = line[m.start():].strip()
+        trailing = ""
+        while candidate and candidate[-1] in ".,;:)":
+            trailing = candidate[-1] + trailing
+            candidate = candidate[:-1]
+            candidate = candidate.rstrip()
+
+        # Only lift if it actually looks like a multi-token command.
+        tokens = candidate.split()
+        if len(tokens) < 2:
+            out.append(line.rstrip())
+            continue
+
+        # Fence only up to the last "command-ish" token so we don't accidentally include prose.
+        last_idx = -1
+        for idx, tok in enumerate(tokens):
+            if is_commandish_token(tok):
+                last_idx = idx
+        if last_idx < 1:
+            out.append(line.rstrip())
+            continue
+
+        command_part = " ".join(tokens[: last_idx + 1]).strip()
+        suffix_part = " ".join(tokens[last_idx + 1 :]).strip()
+
+        prefix = line[:m.start()].rstrip()
+        if prefix:
+            out.append(prefix)
+        out.append("```")
+        out.append(command_part)
+        out.append("```")
+        if suffix_part:
+            out.append(suffix_part)
+        if trailing:
+            out.append(trailing)
+
+    return "\n".join(out).strip() + "\n"
+
+
+def _fence_codeish_lines(text: str) -> str:
+    """Wraps command-like lines in fenced code blocks so they can be preserved exactly."""
+    lines = text.splitlines()
+    out_lines = []
+    block = []
+
+    def flush_block():
+        nonlocal block
+        if not block:
+            return
+        out_lines.append("```")
+        out_lines.extend(block)
+        out_lines.append("```")
+        block = []
+
+    for line in lines:
+        if _is_codeish_line(line):
+            block.append(line.rstrip())
+            continue
+        flush_block()
+        out_lines.append(line.rstrip())
+
+    flush_block()
+    return "\n".join(out_lines).strip() + "\n"
+
+
+def _extract_fenced_code_blocks(markdown_text: str):
+    """Replaces fenced code blocks with placeholders and returns (text, blocks)."""
+    lines = markdown_text.splitlines()
+    out_lines = []
+    blocks = []
+    in_block = False
+    current_block_lines = []
+
+    for line in lines:
+        if line.strip().startswith("```"):
+            if not in_block:
+                in_block = True
+                current_block_lines = ["```"]
+            else:
+                current_block_lines.append("```")
+                blocks.append("\n".join(current_block_lines))
+                placeholder = f"[[CODE_BLOCK_{len(blocks)}]]"
+                out_lines.append(placeholder)
+                in_block = False
+                current_block_lines = []
+            continue
+
+        if in_block:
+            current_block_lines.append(line)
+        else:
+            out_lines.append(line)
+
+    # If the input had an unclosed fence, treat it as plain text.
+    if in_block:
+        out_lines.extend(current_block_lines)
+
+    return "\n".join(out_lines).strip() + "\n", blocks
+
+
+def _extract_inline_code_placeholders(text: str):
+    """Replaces inline code-ish tokens with placeholders and returns (text, items).
+
+    The items are restored later as markdown inline code spans using backticks.
+    """
+    items = []
+
+    def add_item(raw: str) -> str:
+        items.append(raw)
+        return f"[[INLINE_CODE_{len(items)}]]"
+
+    # Only transform non-code-block placeholder segments.
+    segments = re.split(r"(\[\[CODE_BLOCK_\d+\]\])", text)
+    out_segments = []
+
+    flag_re = re.compile(r"(?<!\w)(--[A-Za-z0-9][\w-]*)(?:=([^\s`]+))?")
+    short_flag_re = re.compile(r"(?<!\w)(-[a-zA-Z])(?!\w)")
+    cmd_re = re.compile(
+        r"(?<!\w)(yt-dlp|ffmpeg|python3?|pip3?|brew|conda|ollama|git|curl|wget|npm|node|docker|kubectl|make)(?!\w)",
+        flags=re.IGNORECASE,
+    )
+    model_re = re.compile(
+        r"(?<!\w)(gpt-[0-9][A-Za-z0-9._-]*|llama\d+(?::[0-9a-zA-Z._-]+)?|mixtral(?::[0-9a-zA-Z._-]+)?|gemma\d+(?::[0-9a-zA-Z._-]+)?|phi\d+(?::[0-9a-zA-Z._-]+)?)(?!\w)",
+        flags=re.IGNORECASE,
+    )
+    path_like_re = re.compile(r"(?<!\w)([\w./~:-]+\.(?:py|txt|md|json|yaml|yml|mp3|m4a|wav|mp4|pdf))(?!\w)")
+
+    for seg in segments:
+        if re.fullmatch(r"\[\[CODE_BLOCK_\d+\]\]", seg or ""):
+            out_segments.append(seg)
+            continue
+
+        updated = seg
+
+        def flag_sub(m):
+            if m.group(2) is not None:
+                return add_item(f"{m.group(1)}={m.group(2)}")
+            return add_item(m.group(1))
+
+        updated = flag_re.sub(flag_sub, updated)
+        updated = short_flag_re.sub(lambda m: add_item(m.group(1)), updated)
+        updated = cmd_re.sub(lambda m: add_item(m.group(1)), updated)
+        updated = model_re.sub(lambda m: add_item(m.group(1)), updated)
+        updated = path_like_re.sub(lambda m: add_item(m.group(1)), updated)
+
+        out_segments.append(updated)
+
+    return "".join(out_segments).strip() + "\n", items
+
+
+def _restore_inline_code_placeholders(markdown_text: str, items) -> str:
+    restored = markdown_text
+    for idx, raw in enumerate(items, 1):
+        placeholder = f"[[INLINE_CODE_{idx}]]"
+        restored = restored.replace(placeholder, f"`{raw}`")
+    return restored
+
+
+def _restore_fenced_code_blocks(markdown_text: str, blocks) -> str:
+    restored = markdown_text
+    missing = []
+    for idx, block in enumerate(blocks, 1):
+        placeholder = f"[[CODE_BLOCK_{idx}]]"
+        if placeholder in restored:
+            restored = restored.replace(placeholder, block)
+        else:
+            missing.append(block)
+
+    if missing:
+        if "## Commands" not in restored:
+            restored = restored.rstrip() + "\n\n## Commands\n"
+        restored = restored.rstrip() + "\n\n" + "\n\n".join(missing) + "\n"
+
+    # Light normalization
+    restored = re.sub(r"\n{4,}", "\n\n\n", restored)
+    return restored.strip() + "\n"
+
+
+def _split_text_preserve_paragraphs(text: str, max_words: int = 1800):
+    """Splits text into chunks by paragraphs to keep markdown structure intact."""
+    paragraphs = [p for p in text.split("\n\n") if p.strip()]
+    chunks = []
+    current = []
+    current_words = 0
+
+    for para in paragraphs:
+        words = para.split()
+        word_count = len(words)
+
+        # If a single paragraph is huge (common for raw Whisper), split it into smaller pieces.
+        if word_count > max_words:
+            for i in range(0, word_count, max_words):
+                piece = " ".join(words[i : i + max_words]).strip()
+                if piece:
+                    # Flush any accumulated chunk before appending a large split paragraph.
+                    if current:
+                        chunks.append("\n\n".join(current).strip() + "\n")
+                        current = []
+                        current_words = 0
+                    chunks.append(piece + "\n")
+            continue
+
+        if current and (current_words + word_count) > max_words:
+            chunks.append("\n\n".join(current).strip() + "\n")
+            current = []
+            current_words = 0
+        current.append(para)
+        current_words += word_count
+
+    if current:
+        chunks.append("\n\n".join(current).strip() + "\n")
+    return chunks
+
+
+def clean_and_reformat_transcript(text: str, model_name: str, title: str | None = None):
+    """Cleans a raw Whisper transcript and returns valid Markdown."""
+    text = _normalize_technical_terms(text)
+    text = _lift_inline_commands_to_fences(text)
+    protected = _fence_codeish_lines(text)
+    placeholder_text, code_blocks = _extract_fenced_code_blocks(protected)
+    placeholder_text, inline_items = _extract_inline_code_placeholders(placeholder_text)
+
+    chunks = _split_text_preserve_paragraphs(placeholder_text, max_words=1800)
+    cleaned_chunks = []
+
+    request_timeout_s = int(os.environ.get("LLM_TIMEOUT_SECONDS", "300"))
+    max_retries = int(os.environ.get("LLM_MAX_RETRIES", "3"))
+
+    base_instruction = (
+        "Clean and reformat this raw Whisper transcript into proper Markdown optimized for RAG/document retrieval.\n\n"
+        "Hard requirements:\n"
+        "- Output VALID Markdown only (no preface, no commentary).\n"
+        "- Use '#' for the title, '##' for main sections, '###' for subsections.\n"
+        "- Split into logical sections; keep paragraphs reasonably short.\n"
+        "- Remove filler and repeated speech; keep technical meaning.\n"
+        "- Correct obvious Whisper transcription errors ONLY when you are confident.\n"
+        "- Do NOT invent information or add facts not present.\n\n"
+        "Technical preservation rules (MUST follow):\n"
+        "- Preserve all technical information exactly (tools, names, versions, paths, URLs, numbers).\n"
+        "- Preserve commands and flags exactly.\n"
+        "- Placeholders are immutable technical tokens:\n"
+        "  - [[CODE_BLOCK_N]] is a fenced code block containing commands/flags.\n"
+        "  - [[INLINE_CODE_N]] is an inline command/flag/path token.\n"
+        "  You MUST NOT edit, delete, rename, wrap, or reorder these placeholders.\n"
+        "- Output placement rules for placeholders:\n"
+        "  - Put each [[CODE_BLOCK_N]] on its own line, surrounded by blank lines.\n"
+        "  - Do NOT put [[CODE_BLOCK_N]] inside bullets, tables, blockquotes, or backticks.\n"
+        "  - Keep [[INLINE_CODE_N]] inline in normal sentences (not in fenced blocks).\n\n"
+        "Formatting guidance:\n"
+        "- Use bullet lists for steps/checklists where appropriate.\n"
+        "- Use tables only if clearly helpful; keep them simple.\n"
+    )
+
+    if title:
+        base_instruction += f"\nTitle to use (exactly): {title}\n"
 
     for i, chunk in enumerate(chunks, 1):
-        print(f"\nSummarizing chunk {i}/{len(chunks)}...")
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {"role": "user", "content": f"{instruction}\n\n{chunk}"}
-            ]
-        )
-        summaries.append(response.choices[0].message.content)
+        print(f"\nCleaning chunk {i}/{len(chunks)}...")
+        if i == 1:
+            chunk_instruction = (
+                base_instruction
+                + "\nChunking instructions:\n"
+                + "- This is chunk 1: include the single H1 title at the top.\n"
+                + "- Then create '##' and '###' headings as needed.\n"
+            )
+        else:
+            chunk_instruction = (
+                base_instruction
+                + "\nChunking instructions:\n"
+                + "- This is a continuation chunk: do NOT repeat the H1 title.\n"
+                + "- Continue with appropriate '##' / '###' headings.\n"
+            )
 
-    final_summary = "\n\n".join(summaries)
-    return final_summary
+        last_exc = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "user", "content": f"{chunk_instruction}\n\nTranscript chunk:\n\n{chunk}"}
+                    ],
+                    timeout=request_timeout_s,
+                    temperature=0,
+                )
+                cleaned_chunks.append(response.choices[0].message.content)
+                last_exc = None
+                break
+            except Exception as exc:
+                last_exc = exc
+                err = str(exc).lower()
+                is_timeout = "timed out" in err or "timeout" in err or type(exc).__name__.lower().endswith("timeouterror")
+                if attempt >= max_retries or not is_timeout:
+                    break
+                backoff_s = 2 * attempt
+                print(Fore.YELLOW + f"Request timed out for chunk {i}. Retrying ({attempt}/{max_retries}) after {backoff_s}s..." + Style.RESET_ALL)
+                time.sleep(backoff_s)
+
+        if last_exc is not None:
+            raise last_exc
+
+    cleaned = "\n\n".join(cleaned_chunks).strip() + "\n"
+
+    # Ensure we have an H1 for the final output.
+    if not cleaned.lstrip().startswith("#"):
+        cleaned = (f"# {title}\n\n" if title else "# Transcript\n\n") + cleaned.lstrip()
+
+    cleaned = _restore_fenced_code_blocks(cleaned, code_blocks)
+    cleaned = _restore_inline_code_placeholders(cleaned, inline_items)
+    return cleaned
 
 def delete_file_menu():
     """
@@ -415,6 +852,15 @@ def split_text(text, max_words=3000):
         chunks.append(chunk)
     return chunks
 
+def remove_keywords_from_text(text, keywords):
+    """
+    Removes a list of keywords from text using case-insensitive matching.
+    """
+    cleaned_text = text
+    for keyword in keywords:
+        cleaned_text = re.sub(re.escape(keyword), "", cleaned_text, flags=re.IGNORECASE)
+    return cleaned_text
+
 def check_server_running(base_url, backend):
     """
     Checks if the LM Studio or Ollama server is running by sending a GET request to /models endpoint.
@@ -440,13 +886,13 @@ def transcribe_local_audio():
     Allows the user to select an audio file from the 'local' folder and transcribes it,
     saving the transcript in the 'transcripts' folder.
     """
-    local_dir = os.path.join(os.path.dirname(__file__), "local")
+    local_dir = os.path.join(os.path.dirname(__file__), "audio")
     if not os.path.exists(local_dir):
-        print(Fore.RED + "No 'local' directory found." + Style.RESET_ALL)
+        print(Fore.RED + "No 'audio' directory found." + Style.RESET_ALL)
         return
-    audio_files = [f for f in os.listdir(local_dir) if f.lower().endswith(('.mp3', '.wav', '.m4a'))]
+    audio_files = [f for f in os.listdir(local_dir) if f.lower().endswith(('.mp3', '.wav', '.m4a', '.mp4'))]
     if not audio_files:
-        print("No audio files found in the 'local' directory.")
+        print("No audio files found in the 'audio' directory.")
         return
     print("\nAvailable local audio files:")
     for idx, fname in enumerate(audio_files, 1):
@@ -575,7 +1021,7 @@ def main():
         print("3. Select an audio file to transcribe")
         print("4. Combine transcript files")
         print("5. Start a chat session")
-        print("6. Summarize a transcript file")
+        print("6. Clean & reformat a transcript (Markdown)")
         print("7. Download a SoundCloud audio file")
         print("8. Delete a file")
         print("9. OCR images in a folder")
@@ -637,7 +1083,7 @@ def main():
             print("\nAvailable transcript files:")
             for idx, fname in enumerate(transcript_files, 1):
                 print(f"{idx}. {fname}")
-            file_choice = input("Select a file number to summarize (or 'q' to return): ").strip()
+            file_choice = input("Select a file number to clean/reformat (or 'q' to return): ").strip()
             if file_choice.lower() == "q" or file_choice == "":
                 print("Returning to main menu.")
                 continue
@@ -648,21 +1094,19 @@ def main():
                     print(f"Selected file: {transcript_file}")
                     with open(transcript_file, "r", encoding="utf-8") as f:
                         text = f.read()
-                    print("Summarizing transcript (this may take a moment)...")
-                    summary = summarize_text(text, model_name)
-                    if summary is None:
-                        continue
-                    print("\nSummary:\n", summary)
-                    save_choice = input("\nWould you like to save this summary to the summaries directory? (y/n): ").strip().lower()
+                    print("Cleaning & reformatting transcript into Markdown (this may take a moment)...")
+                    base_name = os.path.splitext(os.path.basename(transcript_file))[0]
+                    cleaned_md = clean_and_reformat_transcript(text, model_name, title=base_name)
+                    print("\nCleaned Markdown:\n", cleaned_md)
+                    save_choice = input("\nWould you like to save this cleaned Markdown to the summaries directory? (y/n): ").strip().lower()
                     if save_choice == "y":
                         summaries_dir = os.path.join(os.path.dirname(__file__), "summaries")
                         if not os.path.exists(summaries_dir):
                             os.makedirs(summaries_dir)
-                        base_name = os.path.splitext(os.path.basename(transcript_file))[0]
-                        summary_file = os.path.join(summaries_dir, f"{base_name}_summary.txt")
-                        with open(summary_file, "w", encoding="utf-8") as f:
-                            f.write(summary)
-                        print(f"Summary saved to: {summary_file}")
+                        cleaned_file = os.path.join(summaries_dir, f"{base_name}_cleaned.md")
+                        with open(cleaned_file, "w", encoding="utf-8") as f:
+                            f.write(cleaned_md)
+                        print(f"Cleaned Markdown saved to: {cleaned_file}")
                 else:
                     print("Invalid selection.")
             except Exception as e:
@@ -1016,6 +1460,20 @@ def ocr_main():
         print(f"\nProcessing {len(image_files)} images in '{folder_name}' (sorted by filename)...")
         print(Fore.CYAN + f"Your system: 12 cores, 32GB RAM, RTX 3050 6GB" + Style.RESET_ALL)
         print(Fore.CYAN + f"Estimated capacity: 50-100+ images per batch" + Style.RESET_ALL)
+
+        keywords_input = input(
+            Fore.YELLOW
+            + "Enter keyword(s) to remove from OCR results (comma-separated, or press Enter to skip): "
+            + Style.RESET_ALL
+        ).strip()
+        keywords_to_remove = [k.strip() for k in keywords_input.split(",") if k.strip()]
+        if keywords_to_remove:
+            print(
+                Fore.CYAN
+                + f"Will remove {len(keywords_to_remove)} keyword(s) from each image OCR result before saving."
+                + Style.RESET_ALL
+            )
+
         ocr_txt_files = []
         
         for idx, img_path in enumerate(image_files, 1):
@@ -1164,6 +1622,9 @@ def ocr_main():
                 else:
                     # Use traditional Tesseract OCR with PSM 3
                     best_text = pytesseract.image_to_string(img, config='--psm 3 --oem 1')
+
+                if keywords_to_remove:
+                    best_text = remove_keywords_from_text(best_text, keywords_to_remove)
                 
                 txt_path = os.path.splitext(img_path)[0] + '.txt'
                 with open(txt_path, 'w', encoding='utf-8') as f:
