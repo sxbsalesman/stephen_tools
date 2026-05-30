@@ -163,16 +163,17 @@ ollama pull llama3
 
 The project uses the following Python packages (see `requirements.txt`):
 
-- **pillow-heif** - HEIF/HEIC image support
-- **yt-dlp** - YouTube and SoundCloud audio downloading
-- **openai** - OpenAI API client
-- **openai-whisper** - Audio transcription
-- **colorama** - Terminal color output
-- **python-dotenv** - Environment variable management
-- **requests** - HTTP requests
-- **pytesseract** - OCR engine wrapper
-- **Pillow** - Image processing
-- **reportlab** - PDF generation
+- **pillow-heif** >= 1.1.1 - HEIF/HEIC image support
+- **yt-dlp** >= 2026.2.4 - YouTube and SoundCloud audio downloading
+- **openai** >= 2.14.0 - OpenAI API client
+- **openai-whisper** >= 20250625 - Audio transcription
+- **colorama** >= 0.4.6 - Terminal color output
+- **python-dotenv** >= 1.2.1 - Environment variable management
+- **requests** >= 2.32.5 - HTTP requests
+- **pytesseract** >= 0.3.13 - OCR engine wrapper
+- **Pillow** >= 12.1.0 - Image processing
+- **reportlab** >= 4.4.7 - PDF generation
+- **torch** >= 2.9.1 - PyTorch (required by Whisper)
 
 ### Additional System Requirements
 

@@ -56,52 +56,74 @@ init(autoreset=True)
 
 def select_backend_and_model():
     """
-    Prompts the user to select which LLM backend to use (OpenAI, LM Studio, or Ollama).
-    Returns the base_url, api_key, backend name, and default model name for the chosen backend.
+    Auto-selects backend/model without prompting:
+    - Prefer LM Studio if running with a loaded model
+    - Else prefer Ollama if running with an available model
+    - Else use OpenAI Cloud (if OPENAI_API_KEY is present)
+    Returns the base_url, api_key, backend name, and detected default model name.
     """
-    print("\nChoose which LLM backend to use:")
-    print("1. OpenAI Cloud (default) - gpt-4o, gpt-4o-mini, gpt-4-turbo, etc.")
-    print("2. LM Studio (local)")
-    print("3. Ollama (local)")
+    def _is_up(url: str) -> bool:
+        try:
+            r = requests.get(url, timeout=3)
+            return r.status_code == 200
+        except Exception:
+            return False
 
-    choice = input("Enter 1, 2, or 3 (or press Enter for OpenAI Cloud): ").strip()
+    ollama_up = _is_up("http://localhost:11434/v1/models")
+    lmstudio_up = _is_up("http://localhost:1234/v1/models")
+    openai_key = os.environ.get("OPENAI_API_KEY")
 
-    if choice == "2":
+    print("\nBackend status:")
+    print(f" - Ollama (11434): {'running' if ollama_up else 'not detected'}")
+    print(f" - LM Studio (1234): {'running' if lmstudio_up else 'not detected'}")
+    print(f" - OpenAI Cloud: {'API key detected' if openai_key else 'no API key'}")
+
+    if lmstudio_up:
         base_url = "http://localhost:1234/v1"
         api_key = "sk-local"
         backend = "LM Studio"
-        model_name = "local-model"
-    elif choice == "3":
+        model_name = "local-model"  # Default fallback
+        try:
+            response = requests.get("http://localhost:1234/v1/models", timeout=5)
+            if response.status_code == 200:
+                models_data = response.json()
+                loaded_models = models_data.get('data', [])
+                if loaded_models:
+                    model_name = loaded_models[0].get('id', 'local-model')
+            else:
+                print(Fore.YELLOW + "LM Studio is running but model list could not be read; using fallback model name." + Style.RESET_ALL)
+        except Exception:
+            print(Fore.YELLOW + "LM Studio is running but model detection failed; using fallback model name." + Style.RESET_ALL)
+
+    elif ollama_up:
         base_url = "http://localhost:11434/v1"
         api_key = "ollama"
         backend = "Ollama"
         # Check which models are available in Ollama
         try:
-            response = requests.get(f"{base_url}/models", timeout=5)
+            response = requests.get("http://localhost:11434/api/tags", timeout=5)
             if response.status_code == 200:
                 models_data = response.json()
-                available = [m.get('model') or m.get('name') for m in models_data.get('data', [])]
+                available = [m.get('name') for m in models_data.get('models', [])]
                 if available:
                     model_name = available[0]  # Use first available model as default
                 else:
-                    model_name = "llama3:8b"  # Fallback if no models found
+                    model_name = "llava:7b"  # Fallback if no models found
             else:
-                model_name = "llama3:8b"  # Fallback
+                model_name = "llava:7b"  # Fallback
         except Exception:
-            model_name = "llama3:8b"  # Fallback if Ollama not running yet
+            model_name = "llava:7b"  # Fallback if Ollama not running yet
+
     else:
         base_url = None
-        print("\nYou selected OpenAI Cloud.")
-        api_key = input("Enter your OpenAI API key (or press Enter to use OPENAI_API_KEY environment variable): ").strip()
+        api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
-            api_key = os.environ.get("OPENAI_API_KEY")
-            if not api_key:
-                print(Fore.RED + "No API key found! Please set OPENAI_API_KEY environment variable or enter it above." + Style.RESET_ALL)
+            print(Fore.RED + "No local backend detected and OPENAI_API_KEY is not set." + Style.RESET_ALL)
         backend = "OpenAI Cloud"
         model_name = "gpt-4o"
 
-    print(f"\n{Fore.GREEN}Selected backend: {backend}{Style.RESET_ALL}")
-    print(f"{Fore.GREEN}Default model: {model_name}{Style.RESET_ALL}")
+    print(f"\n{Fore.GREEN}Auto-selected backend: {backend}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}Auto-selected model: {model_name}{Style.RESET_ALL}")
 
    ## device = "cuda" if torch.cuda.is_available() else "cpu"
    ## model_name = whisper.load_model("base", device=device)
@@ -867,8 +889,8 @@ def check_server_running(base_url, backend):
     Returns True if running, False otherwise.
     """
     try:
-        # LM Studio uses /v1/models, Ollama uses /v1/models as well
-        endpoint = f"{base_url}/v1/models"
+        # base_url already includes /v1 for both LM Studio and Ollama
+        endpoint = f"{base_url}/models"
         response = requests.get(endpoint, timeout=5)
         if response.status_code == 200:
             # If we get a 200 response, the server is running
@@ -946,7 +968,9 @@ def main():
                 api_key=api_key,
                 timeout=60
             )
-            client.models.list()
+            # Only check models.list() for LM Studio (not Ollama, which uses different API)
+            if backend != "Ollama":
+                client.models.list()
         else:
             client = openai.OpenAI(api_key=api_key)
     except Exception as e:
@@ -955,43 +979,7 @@ def main():
         backend = "OpenAI Cloud"
         default_model = "gpt-4o"
 
-    # List available models
-    available_models = []
-    if backend == "OpenAI Cloud":
-        # Show popular OpenAI models
-        print(Fore.CYAN + "\nPopular OpenAI models:" + Style.RESET_ALL)
-        popular_models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"]
-        for idx, model in enumerate(popular_models, 1):
-            print(f" {idx}. {model}")
-            available_models.append(model)
-        print()
-    else:
-        # List models from local backend
-        try:
-            print(Fore.CYAN + "\nAvailable models on this backend:" + Style.RESET_ALL)
-            models = client.models.list()
-            for idx, m in enumerate(models.data, 1):
-                print(f" {idx}. {m.id}")
-                available_models.append(m.id)
-            print()
-        except Exception as e:
-            print(Fore.RED + f"Could not list models: {e}" + Style.RESET_ALL)
-
-    print("\n")
-    user_input = input(Fore.YELLOW + f"Enter the model name or number (or press Enter to use default: {default_model}): " + Style.RESET_ALL).strip()
-    print("\n")
-    
-    # Check if user entered a number to select from the list
-    if user_input.isdigit() and available_models:
-        model_idx = int(user_input) - 1
-        if 0 <= model_idx < len(available_models):
-            model_name = available_models[model_idx]
-        else:
-            print(Fore.YELLOW + f"Invalid selection. Using default: {default_model}" + Style.RESET_ALL)
-            model_name = default_model
-    else:
-        model_name = user_input if user_input else default_model
-    
+    model_name = default_model
     print(Fore.GREEN + f"Using model: {model_name}" + Style.RESET_ALL)
 
     # Check if local backend server is running first
@@ -1703,7 +1691,7 @@ Combined text:
 
                         # Initialize OpenAI client
                         if base_url:
-                            client = openai.OpenAI(base_url=f"{base_url}/v1", api_key=api_key)
+                            client = openai.OpenAI(base_url=base_url, api_key=api_key)
                         else:
                             client = openai.OpenAI(api_key=api_key)
                         
